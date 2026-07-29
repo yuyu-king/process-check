@@ -12,32 +12,21 @@ const actor = (id, username) => ({
   }
 });
 const workspace = {
+  version: 2,
   activeEnvironment: "local",
   environments: { local: { baseUrl: "http://127.0.0.1:4321" } },
   variables: {},
-  actors: [actor("a", "supervisor_a"), actor("b", "manager_b"), actor("c", "manager_c")],
-  actions: [
-    {
-      id: "create",
-      name: "创建项目",
-      request: { method: "POST", url: "{{env.baseUrl}}/projects", body: { approvers: ["manager_b", "manager_c"] } }
-    },
-    {
-      id: "approve",
-      name: "审批项目",
-      request: { method: "POST", url: "{{env.baseUrl}}/projects/{{steps.created.body.id}}/approve", body: {} }
-    }
-  ],
+  templates: { actors: [], actions: [] },
   scenarios: [{
     id: "full",
     name: "完整审批",
     nodes: [
-      { id: "actor-a", type: "actor", data: { actorId: "a" } },
-      { id: "created", type: "action", data: { actionId: "create" } },
-      { id: "actor-b", type: "actor", data: { actorId: "b" } },
-      { id: "approved-b", type: "action", data: { actionId: "approve" } },
-      { id: "actor-c", type: "actor", data: { actorId: "c" } },
-      { id: "approved-c", type: "action", data: { actionId: "approve" } },
+      { id: "actor-a", type: "actor", data: { actor: actor("a", "supervisor_a") } },
+      { id: "created", type: "action", data: { action: { name: "创建项目", request: { method: "POST", url: "{{env.baseUrl}}/projects", body: { approvers: ["manager_b", "manager_c"] } } } } },
+      { id: "actor-b", type: "actor", data: { actor: actor("b", "manager_b") } },
+      { id: "approved-b", type: "action", data: { action: { name: "审批项目", request: { method: "POST", url: "{{env.baseUrl}}/projects/{{steps.created.body.id}}/approve", body: {} } } } },
+      { id: "actor-c", type: "actor", data: { actor: actor("c", "manager_c") } },
+      { id: "approved-c", type: "action", data: { action: { name: "审批项目", request: { method: "POST", url: "{{env.baseUrl}}/projects/{{steps.created.body.id}}/approve", body: {} } } } },
       { id: "email-sent", type: "assert", data: { actual: "{{steps.approved-c.body.emailSent}}", operator: "equals", expected: true } }
     ],
     edges: [

@@ -13,7 +13,7 @@ Generate a safe, evidence-based Process Check workspace from the target project.
 2. Identify the requested actors, their roles, login request, and session mechanism. Use placeholder credentials only; never copy real secrets.
 3. Trace the business workflow end to end. Record each request's method, URL, body, expected status, output fields consumed later, and externally visible side effects.
 4. Read [references/workspace-schema.md](references/workspace-schema.md) before generating JSON.
-5. Define reusable actors and actions. Use stable lowercase kebab-case IDs.
+5. Create Actor and Action node instances with inline configuration. Use stable lowercase kebab-case node IDs. Keep `templates` empty unless the user explicitly asks to save reusable templates.
 6. Build one or more scenario DAGs. Place nodes left to right in execution order, generally 250 pixels apart. Make every required ordering relation explicit with an edge.
 7. Add assertions for HTTP status, critical response fields, state transitions, authorization failures, and requested side effects. Do not claim an email was sent unless an observable API response, outbox endpoint, mock, event, or test hook exposes it.
 8. Validate all references: actor IDs, action IDs, scenario IDs, edge endpoints, and every `steps.<nodeId>` path.

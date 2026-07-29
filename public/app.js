@@ -3,82 +3,26 @@ const uid = (prefix) => `${prefix}-${Math.random().toString(36).slice(2, 8)}`;
 const clone = (value) => JSON.parse(JSON.stringify(value));
 
 const seed = {
-  version: 1,
+  version: 2,
   name: "项目审批链路验证",
   activeEnvironment: "local",
   environments: {
     local: { baseUrl: "http://127.0.0.1:4321" }
   },
   variables: {},
-  actors: [
-    {
-      id: "actor-supervisor-a",
-      name: "稽查主管 A",
-      variables: { username: "supervisor_a", password: "change-me" },
-      login: {
-        method: "POST",
-        url: "{{env.baseUrl}}/login",
-        headers: {},
-        body: { username: "{{actor.username}}", password: "{{actor.password}}" }
-      }
-    },
-    {
-      id: "actor-manager-b",
-      name: "稽查经理 B",
-      variables: { username: "manager_b", password: "change-me" },
-      login: {
-        method: "POST",
-        url: "{{env.baseUrl}}/login",
-        headers: {},
-        body: { username: "{{actor.username}}", password: "{{actor.password}}" }
-      }
-    },
-    {
-      id: "actor-manager-c",
-      name: "稽查经理 C",
-      variables: { username: "manager_c", password: "change-me" },
-      login: {
-        method: "POST",
-        url: "{{env.baseUrl}}/login",
-        headers: {},
-        body: { username: "{{actor.username}}", password: "{{actor.password}}" }
-      }
-    }
-  ],
-  actions: [
-    {
-      id: "action-create-project",
-      name: "创建项目",
-      request: {
-        method: "POST",
-        url: "{{env.baseUrl}}/projects",
-        headers: {},
-        body: { name: "自动化验证项目", approvers: ["manager_b", "manager_c"] }
-      }
-    },
-    {
-      id: "action-approve-project",
-      name: "审批项目",
-      request: {
-        method: "POST",
-        url: "{{env.baseUrl}}/projects/{{steps.create-project.body.id}}/approve",
-        headers: {},
-        body: { approved: true }
-      }
-    }
-  ],
+  templates: { actors: [], actions: [] },
   scenarios: [
     {
       id: "scenario-full-approval",
       name: "主管创建、两位经理审批",
       nodes: [
-        { id: "use-a", type: "actor", x: 80, y: 150, data: { actorId: "actor-supervisor-a" } },
-        { id: "create-project", type: "action", x: 330, y: 150, data: { actionId: "action-create-project" } },
+        { id: "use-a", type: "actor", x: 80, y: 150, data: { actor: { name: "稽查主管 A", variables: { username: "supervisor_a", password: "change-me" }, login: { method: "POST", url: "{{env.baseUrl}}/login", headers: {}, body: { username: "{{actor.username}}", password: "{{actor.password}}" } } } } },
+        { id: "create-project", type: "action", x: 330, y: 150, data: { action: { name: "创建项目", request: { method: "POST", url: "{{env.baseUrl}}/projects", headers: {}, body: { name: "自动化验证项目", approvers: ["manager_b", "manager_c"] } } } } },
         { id: "assert-create", type: "assert", x: 580, y: 150, data: { label: "创建成功", actual: "{{steps.create-project.status}}", operator: "equals", expected: 201 } },
-        { id: "use-b", type: "actor", x: 830, y: 150, data: { actorId: "actor-manager-b" } },
-        { id: "approve-b", type: "action", x: 1080, y: 150, data: { actionId: "action-approve-project" } },
-        { id: "use-c", type: "actor", x: 1330, y: 150, data: { actorId: "actor-manager-c" } },
-        { id: "approve-c", type: "action", x: 1580, y: 150, data: { actionId: "action-approve-project" } },
+        { id: "use-b", type: "actor", x: 830, y: 150, data: { actor: { name: "稽查经理 B", variables: { username: "manager_b", password: "change-me" }, login: { method: "POST", url: "{{env.baseUrl}}/login", headers: {}, body: { username: "{{actor.username}}", password: "{{actor.password}}" } } } } },
+        { id: "approve-b", type: "action", x: 1080, y: 150, data: { action: { name: "审批项目", request: { method: "POST", url: "{{env.baseUrl}}/projects/{{steps.create-project.body.id}}/approve", headers: {}, body: { approved: true } } } } },
+        { id: "use-c", type: "actor", x: 1330, y: 150, data: { actor: { name: "稽查经理 C", variables: { username: "manager_c", password: "change-me" }, login: { method: "POST", url: "{{env.baseUrl}}/login", headers: {}, body: { username: "{{actor.username}}", password: "{{actor.password}}" } } } } },
+        { id: "approve-c", type: "action", x: 1580, y: 150, data: { action: { name: "审批项目", request: { method: "POST", url: "{{env.baseUrl}}/projects/{{steps.create-project.body.id}}/approve", headers: {}, body: { approved: true } } } } },
         { id: "assert-mail", type: "assert", x: 1830, y: 150, data: { label: "最后审批触发邮件", actual: "{{steps.approve-c.body.emailSent}}", operator: "equals", expected: true } }
       ],
       edges: [
@@ -104,8 +48,28 @@ let selectedEvent = null;
 let drag = null;
 
 function loadWorkspace() {
-  try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || clone(seed); }
+  try { return normalizeWorkspace(JSON.parse(localStorage.getItem(STORAGE_KEY)) || clone(seed)); }
   catch { return clone(seed); }
+}
+function normalizeWorkspace(value) {
+  const result = value && typeof value === "object" ? value : clone(seed);
+  result.templates ||= { actors: [], actions: [] };
+  result.templates.actors ||= [];
+  result.templates.actions ||= [];
+  if ((result.version || 1) < 2 || result.actors || result.actions) {
+    const actors = new Map((result.actors || []).map((item) => [item.id, item]));
+    const actions = new Map((result.actions || []).map((item) => [item.id, item]));
+    for (const scenario of result.scenarios || []) {
+      for (const node of scenario.nodes || []) {
+        if (node.type === "actor" && !node.data?.actor && actors.has(node.data?.actorId)) node.data = { actor: clone(actors.get(node.data.actorId)) };
+        if (node.type === "action" && !node.data?.action && actions.has(node.data?.actionId)) node.data = { ...node.data, action: clone(actions.get(node.data.actionId)) };
+      }
+    }
+    delete result.actors;
+    delete result.actions;
+  }
+  result.version = 2;
+  return result;
 }
 function save() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(workspace));
@@ -113,20 +77,19 @@ function save() {
 function currentScenario() {
   return workspace.scenarios.find((item) => item.id === scenarioId);
 }
-function definition(type, id) {
-  const collection = type === "actor" ? workspace.actors : type === "action" ? workspace.actions : workspace.scenarios;
-  return collection.find((item) => item.id === id);
+function template(type, id) {
+  return workspace.templates?.[`${type}s`]?.find((item) => item.id === id);
 }
 function nodeLabel(node) {
-  if (node.type === "actor") return definition("actor", node.data.actorId)?.name || "未选择 Actor";
-  if (node.type === "action") return definition("action", node.data.actionId)?.name || "未选择 Action";
-  if (node.type === "scenario") return definition("scenario", node.data.scenarioId)?.name || "未选择子场景";
+  if (node.type === "actor") return node.data.actor?.name || "未配置 Actor";
+  if (node.type === "action") return node.data.action?.name || "未配置 Action";
+  if (node.type === "scenario") return workspace.scenarios.find((item) => item.id === node.data.scenarioId)?.name || "未选择子场景";
   return node.data.label || "断言";
 }
 function nodeSubtitle(node) {
   if (node.type === "actor") return "登录并切换会话";
   if (node.type === "action") {
-    const action = definition("action", node.data.actionId);
+    const action = node.data.action;
     return `${action?.request?.method || "GET"} ${action?.request?.url || ""}`;
   }
   if (node.type === "scenario") return "执行并共享变量";
@@ -148,6 +111,7 @@ function render() {
         <select id="scenarioSelect" class="scenario-select">
           ${workspace.scenarios.map((item) => `<option value="${item.id}" ${item.id === scenarioId ? "selected" : ""}>${escapeHtml(item.name)}</option>`).join("")}
         </select>
+        <input id="scenarioName" class="scenario-name" value="${escapeHtml(scenario?.name || "")}" placeholder="输入场景名称">
         <button id="addScenario">＋ 场景</button>
         <span class="status ${runState}">${statusText()}</span>
         <div class="spacer"></div>
@@ -175,19 +139,17 @@ function render() {
 function renderSidebar() {
   return `<aside class="sidebar">
     <div class="section">
-      <div class="section-head"><h3>Actors</h3><button class="icon-btn" data-add-def="actor">＋</button></div>
-      ${workspace.actors.map((item) => libraryItem("actor", item)).join("")}
+      <div class="section-head"><h3>添加节点</h3></div>
+      ${libraryItem("actor", { id: "new-actor", name: "Actor", detail: "登录与独立会话" })}
+      ${libraryItem("action", { id: "new-action", name: "Action", detail: "配置 HTTP 请求" })}
+      ${libraryItem("assert", { id: "new-assert", name: "Assert", detail: "验证响应值" })}
+      ${libraryItem("scenario", { id: "new-scenario", name: "子场景", detail: "复用其他场景" })}
     </div>
     <div class="section">
-      <div class="section-head"><h3>Actions</h3><button class="icon-btn" data-add-def="action">＋</button></div>
-      ${workspace.actions.map((item) => libraryItem("action", item)).join("")}
+      <div class="section-head"><h3>我的模板</h3></div>
+      ${["actor", "action"].flatMap((type) => (workspace.templates?.[`${type}s`] || []).map((item) => templateItem(type, item))).join("") || `<p class="hint">配置好节点后，可在右侧属性面板保存为模板。</p>`}
     </div>
-    <div class="section">
-      <div class="section-head"><h3>Flow controls</h3></div>
-      ${libraryItem("assert", { id: "new-assert", name: "断言", detail: "验证响应值" })}
-      ${workspace.scenarios.filter((item) => item.id !== scenarioId).map((item) => libraryItem("scenario", item)).join("")}
-    </div>
-    <p class="hint">拖入画布创建节点。点击右侧端口，再点击另一个节点的左侧端口完成连线。</p>
+    <p class="hint">先拖入节点类型，再在右侧配置。点击右侧端口，再点击另一个节点的左侧端口完成连线。</p>
   </aside>`;
 }
 function libraryItem(type, item) {
@@ -197,10 +159,20 @@ function libraryItem(type, item) {
     <div class="meta"><strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(detail || "")}</small></div>
   </div>`;
 }
+function templateItem(type, item) {
+  return `<div class="template-row">
+    <div class="library-item" draggable="true" data-library-type="${type}" data-template-id="${item.id}">
+      <div class="glyph ${type}">${glyph(type)}</div>
+      <div class="meta"><strong>${escapeHtml(item.name)}</strong><small>${type} 模板</small></div>
+    </div>
+    <button class="template-delete" data-delete-template="${type}:${item.id}" title="删除模板">×</button>
+  </div>`;
+}
 function renderNode(node) {
   const selected = selection?.kind === "node" && selection.id === node.id;
   return `<article class="node ${selected ? "selected" : ""}" data-node-id="${node.id}" style="left:${node.x}px;top:${node.y}px">
     <button class="port in" data-port-in="${node.id}" aria-label="输入端口"></button>
+    <button class="node-delete" data-node-delete="${node.id}" title="删除节点">×</button>
     <div class="node-head">
       <div class="glyph ${node.type}">${glyph(node.type)}</div>
       <div style="min-width:0"><div class="node-title">${escapeHtml(nodeLabel(node))}</div><div class="node-subtitle">${escapeHtml(node.type)}</div></div>
@@ -221,18 +193,34 @@ function renderEdges(scenario) {
 }
 
 function renderInspector() {
-  if (!selection) return `<h3>属性</h3><p class="muted">选择画布节点或左侧定义进行编辑。</p>
+  if (!selection) return `<h3>属性</h3><p class="muted">选择画布节点进行编辑，或从左侧拖入一个新节点。</p>
     <div class="field"><label>环境变量</label><textarea data-json="environments">${escapeHtml(JSON.stringify(workspace.environments, null, 2))}</textarea></div>
     <div class="field"><label>共享初始变量</label><textarea data-json="variables">${escapeHtml(JSON.stringify(workspace.variables, null, 2))}</textarea></div>`;
-  if (selection.kind === "definition") return renderDefinitionInspector(selection.type, definition(selection.type, selection.id));
   const node = currentScenario().nodes.find((item) => item.id === selection.id);
   if (!node) return "";
   const common = `<div class="field"><label>节点 ID（变量路径使用此值）</label><input data-node-field="id" value="${escapeHtml(node.id)}"></div>`;
   let fields = "";
-  if (node.type === "actor") fields = selectField("Actor", "actorId", workspace.actors, node.data.actorId);
-  if (node.type === "action") fields = selectField("Action", "actionId", workspace.actions, node.data.actionId) +
-    `<div class="field"><label>固定 Actor（留空则使用链路中最近 Actor）</label><select data-node-data="actorId"><option value="">自动</option>${workspace.actors.map((item) => `<option value="${item.id}" ${node.data.actorId === item.id ? "selected" : ""}>${escapeHtml(item.name)}</option>`).join("")}</select></div>
-     <div class="field"><label>将响应 body 保存为 shared 变量（可选）</label><input data-node-data="saveAs" value="${escapeHtml(node.data.saveAs || "")}" placeholder="project"></div>`;
+  if (node.type === "actor") {
+    const actor = node.data.actor;
+    fields = `<div class="field"><label>名称</label><input data-config-field="name" value="${escapeHtml(actor.name)}"></div>
+      <div class="row"><div class="field"><label>登录方法</label><select data-config-request-field="method">${["POST","GET","PUT","PATCH"].map((method) => `<option ${actor.login.method === method ? "selected" : ""}>${method}</option>`).join("")}</select></div>
+      <div class="field"><label>登录地址</label><input data-config-request-field="url" value="${escapeHtml(actor.login.url)}"></div></div>
+      <div class="field"><label>Actor 变量</label><textarea data-config-json="variables">${escapeHtml(JSON.stringify(actor.variables || {}, null, 2))}</textarea></div>
+      <div class="field"><label>请求头 JSON</label><textarea data-config-request-json="headers">${escapeHtml(JSON.stringify(actor.login.headers || {}, null, 2))}</textarea></div>
+      <div class="field"><label>请求体 JSON</label><textarea data-config-request-json="body">${escapeHtml(JSON.stringify(actor.login.body || {}, null, 2))}</textarea></div>`;
+  }
+  if (node.type === "action") {
+    const action = node.data.action;
+    const actors = currentScenario().nodes.filter((item) => item.type === "actor");
+    fields = `<div class="field"><label>名称</label><input data-config-field="name" value="${escapeHtml(action.name)}"></div>
+      <div class="row"><div class="field"><label>方法</label><select data-config-request-field="method">${["GET","POST","PUT","PATCH","DELETE"].map((method) => `<option ${action.request.method === method ? "selected" : ""}>${method}</option>`).join("")}</select></div>
+      <div class="field"><label>地址</label><input data-config-request-field="url" value="${escapeHtml(action.request.url)}"></div></div>
+      <div class="field"><label>指定 Actor（留空则使用链路中最近 Actor）</label><select data-node-data="actorNodeId"><option value="">自动</option>${actors.map((item) => `<option value="${item.id}" ${node.data.actorNodeId === item.id ? "selected" : ""}>${escapeHtml(nodeLabel(item))}</option>`).join("")}</select></div>
+      <div class="field"><label>请求头 JSON</label><textarea data-config-request-json="headers">${escapeHtml(JSON.stringify(action.request.headers || {}, null, 2))}</textarea></div>
+      <div class="field"><label>请求体 JSON</label><textarea data-config-request-json="body">${escapeHtml(JSON.stringify(action.request.body ?? {}, null, 2))}</textarea></div>
+      <div class="field"><label>保存响应 body 到 shared（可选）</label><input data-node-data="saveAs" value="${escapeHtml(node.data.saveAs || "")}" placeholder="project"></div>
+      <p class="hint">变量示例：{{env.baseUrl}}、{{steps.create-project.body.id}}、{{shared.project.id}}</p>`;
+  }
   if (node.type === "scenario") fields = selectField("子场景", "scenarioId", workspace.scenarios.filter((item) => item.id !== scenarioId), node.data.scenarioId);
   if (node.type === "assert") fields = `
     <div class="field"><label>名称</label><input data-node-data="label" value="${escapeHtml(node.data.label || "")}"></div>
@@ -240,29 +228,13 @@ function renderInspector() {
     <div class="field"><label>操作符</label><select data-node-data="operator">${["equals","notEquals","exists","truthy","contains","greaterThan","matches"].map((item) => `<option ${node.data.operator === item ? "selected" : ""}>${item}</option>`).join("")}</select></div>
     <div class="field"><label>期望值（JSON）</label><input data-node-expected value="${escapeHtml(JSON.stringify(node.data.expected))}"></div>`;
   return `<h3>${escapeHtml(node.type)} 节点</h3>${common}${fields}
-    <div class="inspector-actions"><button class="danger" id="deleteNode">删除节点</button></div>`;
+    <div class="inspector-actions">
+      ${["actor", "action"].includes(node.type) ? `<button id="saveTemplate">保存为模板</button>` : ""}
+      <button class="danger" id="deleteNode">删除节点</button>
+    </div>`;
 }
 function selectField(label, key, items, selected) {
   return `<div class="field"><label>${label}</label><select data-node-data="${key}">${items.map((item) => `<option value="${item.id}" ${selected === item.id ? "selected" : ""}>${escapeHtml(item.name)}</option>`).join("")}</select></div>`;
-}
-function renderDefinitionInspector(type, item) {
-  if (!item) return "";
-  if (type === "actor") return `<h3>Actor 定义</h3>
-    <div class="field"><label>名称</label><input data-def-field="name" value="${escapeHtml(item.name)}"></div>
-    <div class="row"><div class="field"><label>登录方法</label><select data-login-field="method">${["POST","GET","PUT","PATCH"].map((method) => `<option ${item.login.method === method ? "selected" : ""}>${method}</option>`).join("")}</select></div>
-    <div class="field"><label>登录地址</label><input data-login-field="url" value="${escapeHtml(item.login.url)}"></div></div>
-    <div class="field"><label>Actor 变量（仅保存在本机；导出前请移除真实密码）</label><textarea data-def-json="variables">${escapeHtml(JSON.stringify(item.variables || {}, null, 2))}</textarea></div>
-    <div class="field"><label>请求头 JSON</label><textarea data-login-json="headers">${escapeHtml(JSON.stringify(item.login.headers || {}, null, 2))}</textarea></div>
-    <div class="field"><label>请求体 JSON</label><textarea data-login-json="body">${escapeHtml(JSON.stringify(item.login.body || {}, null, 2))}</textarea></div>
-    <div class="inspector-actions"><button class="danger" data-delete-def="actor">删除定义</button></div>`;
-  return `<h3>Action 定义</h3>
-    <div class="field"><label>名称</label><input data-def-field="name" value="${escapeHtml(item.name)}"></div>
-    <div class="row"><div class="field"><label>方法</label><select data-request-field="method">${["GET","POST","PUT","PATCH","DELETE"].map((method) => `<option ${item.request.method === method ? "selected" : ""}>${method}</option>`).join("")}</select></div>
-    <div class="field"><label>地址</label><input data-request-field="url" value="${escapeHtml(item.request.url)}"></div></div>
-    <div class="field"><label>请求头 JSON</label><textarea data-request-json="headers">${escapeHtml(JSON.stringify(item.request.headers || {}, null, 2))}</textarea></div>
-    <div class="field"><label>请求体 JSON</label><textarea data-request-json="body">${escapeHtml(JSON.stringify(item.request.body ?? {}, null, 2))}</textarea></div>
-    <p class="hint">变量示例：{{env.baseUrl}}、{{steps.create-project.body.id}}、{{shared.project.id}}</p>
-    <div class="inspector-actions"><button class="danger" data-delete-def="action">删除定义</button></div>`;
 }
 function renderLogs() {
   return `<section class="logs">
@@ -281,29 +253,35 @@ function statusText() {
 
 function bindEvents() {
   document.querySelector("#scenarioSelect").onchange = (event) => { scenarioId = event.target.value; selection = null; pendingEdgeSource = null; render(); };
+  document.querySelector("#scenarioName").onchange = (event) => {
+    currentScenario().name = event.target.value.trim() || "未命名场景";
+    save(); render();
+  };
   document.querySelector("#addScenario").onclick = addScenario;
   document.querySelector("#runButton").onclick = runScenario;
   document.querySelector("#exportButton").onclick = exportJson;
   document.querySelector("#importButton").onclick = () => document.querySelector("#fileInput").click();
   document.querySelector("#fileInput").onchange = importJson;
-  document.querySelectorAll("[data-add-def]").forEach((button) => button.onclick = () => addDefinition(button.dataset.addDef));
   document.querySelectorAll(".library-item").forEach((item) => {
-    item.ondragstart = (event) => event.dataTransfer.setData("application/json", JSON.stringify({ type: item.dataset.libraryType, id: item.dataset.libraryId }));
-    item.onclick = () => {
-      if (["actor","action"].includes(item.dataset.libraryType)) selection = { kind: "definition", type: item.dataset.libraryType, id: item.dataset.libraryId };
-      render();
-    };
+    item.ondragstart = (event) => event.dataTransfer.setData("application/json", JSON.stringify({
+      type: item.dataset.libraryType,
+      templateId: item.dataset.templateId || null
+    }));
+  });
+  document.querySelectorAll("[data-delete-template]").forEach((button) => button.onclick = (event) => {
+    event.stopPropagation();
+    const [type, id] = button.dataset.deleteTemplate.split(":");
+    workspace.templates[`${type}s`] = workspace.templates[`${type}s`].filter((item) => item.id !== id);
+    save(); render();
   });
   const canvas = document.querySelector("#canvas");
   canvas.ondragover = (event) => event.preventDefault();
   canvas.ondrop = dropNode;
   document.querySelectorAll(".node").forEach((element) => {
     element.onpointerdown = startNodeDrag;
-    element.onclick = (event) => {
-      if (event.target.classList.contains("port")) return;
-      selection = { kind: "node", id: element.dataset.nodeId };
-      render();
-    };
+  });
+  document.querySelectorAll("[data-node-delete]").forEach((button) => button.onclick = (event) => {
+    event.stopPropagation(); deleteNode(button.dataset.nodeDelete);
   });
   document.querySelectorAll("[data-port-out]").forEach((port) => port.onclick = (event) => {
     event.stopPropagation(); pendingEdgeSource = port.dataset.portOut; render();
@@ -330,17 +308,14 @@ function bindInspectorEvents() {
     document.querySelector("[data-node-expected]")?.addEventListener("change", (event) => {
       try { node.data.expected = JSON.parse(event.target.value); save(); render(); } catch { alert("期望值必须是有效 JSON，例如 true、201 或 \"approved\""); }
     });
+    const config = node.type === "actor" ? node.data.actor : node.type === "action" ? node.data.action : null;
+    const request = node.type === "actor" ? config?.login : config?.request;
+    document.querySelectorAll("[data-config-field]").forEach((field) => field.onchange = () => { config[field.dataset.configField] = field.value; save(); render(); });
+    document.querySelectorAll("[data-config-json]").forEach((field) => field.onchange = () => updateJson(field, config, field.dataset.configJson));
+    document.querySelectorAll("[data-config-request-field]").forEach((field) => field.onchange = () => { request[field.dataset.configRequestField] = field.value; save(); render(); });
+    document.querySelectorAll("[data-config-request-json]").forEach((field) => field.onchange = () => updateJson(field, request, field.dataset.configRequestJson));
+    document.querySelector("#saveTemplate")?.addEventListener("click", () => saveNodeTemplate(node));
     document.querySelector("#deleteNode")?.addEventListener("click", () => deleteNode(node.id));
-  }
-  if (selection?.kind === "definition") {
-    const item = definition(selection.type, selection.id);
-    document.querySelectorAll("[data-def-field]").forEach((field) => field.onchange = () => { item[field.dataset.defField] = field.value; save(); render(); });
-    document.querySelectorAll("[data-def-json]").forEach((field) => field.onchange = () => updateJson(field, item, field.dataset.defJson));
-    document.querySelectorAll("[data-login-field]").forEach((field) => field.onchange = () => { item.login[field.dataset.loginField] = field.value; save(); render(); });
-    document.querySelectorAll("[data-login-json]").forEach((field) => field.onchange = () => updateJson(field, item.login, field.dataset.loginJson));
-    document.querySelectorAll("[data-request-field]").forEach((field) => field.onchange = () => { item.request[field.dataset.requestField] = field.value; save(); render(); });
-    document.querySelectorAll("[data-request-json]").forEach((field) => field.onchange = () => updateJson(field, item.request, field.dataset.requestJson));
-    document.querySelector("[data-delete-def]")?.addEventListener("click", () => deleteDefinition(selection.type, selection.id));
   }
 }
 function updateJson(field, owner, key) {
@@ -361,24 +336,26 @@ function dropNode(event) {
   try { payload = JSON.parse(event.dataTransfer.getData("application/json")); } catch { return; }
   const rect = document.querySelector(".canvas-inner").getBoundingClientRect();
   const id = uid(payload.type);
-  const data = payload.type === "actor" ? { actorId: payload.id }
-    : payload.type === "action" ? { actionId: payload.id }
-    : payload.type === "scenario" ? { scenarioId: payload.id }
+  const savedTemplate = payload.templateId ? template(payload.type, payload.templateId) : null;
+  const data = payload.type === "actor" ? { actor: savedTemplate ? clone(savedTemplate.config) : { name: "新 Actor", variables: { username: "", password: "" }, login: { method: "POST", url: "{{env.baseUrl}}/login", headers: {}, body: {} } } }
+    : payload.type === "action" ? { action: savedTemplate ? clone(savedTemplate.config) : { name: "新 Action", request: { method: "GET", url: "{{env.baseUrl}}/", headers: {}, body: {} } } }
+    : payload.type === "scenario" ? { scenarioId: workspace.scenarios.find((item) => item.id !== scenarioId)?.id || "" }
     : { label: "响应状态正确", actual: "{{steps.action-id.status}}", operator: "equals", expected: 200 };
   currentScenario().nodes.push({ id, type: payload.type, x: Math.max(20, event.clientX - rect.left - 90), y: Math.max(20, event.clientY - rect.top - 35), data });
   selection = { kind: "node", id }; save(); render();
 }
 function startNodeDrag(event) {
-  if (event.target.classList.contains("port")) return;
+  if (event.target.classList.contains("port") || event.target.classList.contains("node-delete")) return;
   const element = event.currentTarget;
   const node = currentScenario().nodes.find((item) => item.id === element.dataset.nodeId);
-  drag = { node, element, startX: event.clientX, startY: event.clientY, x: node.x, y: node.y };
+  drag = { node, element, startX: event.clientX, startY: event.clientY, x: node.x, y: node.y, moved: false };
   element.setPointerCapture(event.pointerId);
   element.onpointermove = moveNode;
   element.onpointerup = endNodeDrag;
 }
 function moveNode(event) {
   if (!drag) return;
+  if (Math.abs(event.clientX - drag.startX) + Math.abs(event.clientY - drag.startY) > 3) drag.moved = true;
   drag.node.x = Math.max(0, drag.x + event.clientX - drag.startX);
   drag.node.y = Math.max(0, drag.y + event.clientY - drag.startY);
   drag.element.style.left = `${drag.node.x}px`;
@@ -386,24 +363,24 @@ function moveNode(event) {
 }
 function endNodeDrag() {
   if (!drag) return;
-  drag = null; save(); render();
+  const { node, moved } = drag;
+  drag = null;
+  if (!moved) selection = { kind: "node", id: node.id };
+  save(); render();
 }
-function addDefinition(type) {
-  const id = uid(type);
-  if (type === "actor") workspace.actors.push({ id, name: "新 Actor", variables: { username: "", password: "" }, login: { method: "POST", url: "{{env.baseUrl}}/login", headers: {}, body: {} } });
-  else workspace.actions.push({ id, name: "新 Action", request: { method: "GET", url: "{{env.baseUrl}}/", headers: {}, body: {} } });
-  selection = { kind: "definition", type, id }; save(); render();
-}
-function deleteDefinition(type, id) {
-  const refs = currentScenario().nodes.some((node) => node.data?.[`${type}Id`] === id);
-  if (refs) return alert("当前场景仍在使用这个定义，请先删除对应节点。");
-  const key = `${type}s`;
-  workspace[key] = workspace[key].filter((item) => item.id !== id);
-  selection = null; save(); render();
+function saveNodeTemplate(node) {
+  const defaultName = nodeLabel(node);
+  const name = window.prompt("模板名称", defaultName)?.trim();
+  if (!name) return;
+  const config = clone(node.type === "actor" ? node.data.actor : node.data.action);
+  workspace.templates[`${node.type}s`].push({ id: uid(`${node.type}-template`), name, config });
+  save(); render();
 }
 function addScenario() {
+  const name = window.prompt("场景名称", `新场景 ${workspace.scenarios.length + 1}`)?.trim();
+  if (!name) return;
   const id = uid("scenario");
-  workspace.scenarios.push({ id, name: `新场景 ${workspace.scenarios.length + 1}`, nodes: [], edges: [] });
+  workspace.scenarios.push({ id, name, nodes: [], edges: [] });
   scenarioId = id; selection = null; save(); render();
 }
 function deleteNode(id) {
@@ -439,7 +416,7 @@ async function importJson(event) {
   try {
     const imported = JSON.parse(await file.text());
     if (!Array.isArray(imported.actors) || !Array.isArray(imported.actions) || !Array.isArray(imported.scenarios)) throw new Error("缺少 actors、actions 或 scenarios 数组");
-    workspace = imported; scenarioId = workspace.scenarios[0]?.id; selection = null; save(); render();
+    workspace = normalizeWorkspace(imported); scenarioId = workspace.scenarios[0]?.id; selection = null; save(); render();
   } catch (error) { alert(`导入失败：${error.message}`); }
 }
 

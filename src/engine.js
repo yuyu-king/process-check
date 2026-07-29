@@ -11,9 +11,9 @@ export class FlowError extends Error {
 export function validateWorkspace(workspace) {
   const errors = [];
   if (!workspace || typeof workspace !== "object") errors.push("根对象必须是 JSON object");
-  for (const key of ["actors", "actions", "scenarios"]) {
-    if (!Array.isArray(workspace?.[key])) errors.push(`${key} 必须是数组`);
-  }
+  if (!Array.isArray(workspace?.scenarios)) errors.push("scenarios 必须是数组");
+  if (workspace?.actors !== undefined && !Array.isArray(workspace.actors)) errors.push("actors 必须是数组");
+  if (workspace?.actions !== undefined && !Array.isArray(workspace.actions)) errors.push("actions 必须是数组");
   const unique = (items, label) => {
     const seen = new Set();
     for (const item of items || []) {
@@ -22,8 +22,8 @@ export function validateWorkspace(workspace) {
       else seen.add(item.id);
     }
   };
-  unique(workspace?.actors, "actors");
-  unique(workspace?.actions, "actions");
+  unique(workspace?.actors || [], "actors");
+  unique(workspace?.actions || [], "actions");
   unique(workspace?.scenarios, "scenarios");
   for (const scenario of workspace?.scenarios || []) {
     unique(scenario.nodes, `scenario:${scenario.id}.nodes`);
@@ -156,8 +156,8 @@ function assertionPass(operator, actual, expected) {
 export async function executeWorkspace(workspace, scenarioId, options = {}) {
   const errors = validateWorkspace(workspace);
   if (errors.length) throw new FlowError("工作区 JSON 无效", { errors });
-  const actors = new Map(workspace.actors.map((item) => [item.id, item]));
-  const actions = new Map(workspace.actions.map((item) => [item.id, item]));
+  const actors = new Map((workspace.actors || []).map((item) => [item.id, item]));
+  const actions = new Map((workspace.actions || []).map((item) => [item.id, item]));
   const scenarios = new Map(workspace.scenarios.map((item) => [item.id, item]));
   const fetchImpl = options.fetchImpl || fetch;
   const sessions = new Map();
@@ -171,18 +171,17 @@ export async function executeWorkspace(workspace, scenarioId, options = {}) {
   let sequence = 0;
   const log = (event) => events.push({ sequence: ++sequence, timestamp: new Date().toISOString(), ...event });
 
-  async function ensureActor(actorId) {
-    const actor = actors.get(actorId);
-    if (!actor) throw new FlowError(`Actor 不存在: ${actorId}`);
-    if (!sessions.has(actorId)) sessions.set(actorId, { jar: new Map(), loggedIn: false });
-    const session = sessions.get(actorId);
+  async function ensureActor(sessionKey, actor) {
+    if (!actor) throw new FlowError(`Actor 配置不存在: ${sessionKey}`);
+    if (!sessions.has(sessionKey)) sessions.set(sessionKey, { jar: new Map(), loggedIn: false });
+    const session = sessions.get(sessionKey);
     if (session.loggedIn || !actor.login?.url) return session;
-    log({ type: "actor:start", actorId, label: actor.name });
+    log({ type: "actor:start", actorId: sessionKey, label: actor.name });
     const result = await httpRequest(actor.login, { ...context, actor: actor.variables || {} }, session.jar, fetchImpl);
-    context.actors[actorId] = { login: result };
+    context.actors[sessionKey] = { login: result };
     if (!result.ok) throw new FlowError(`Actor ${actor.name} 登录失败: HTTP ${result.status}`, { result });
     session.loggedIn = true;
-    log({ type: "actor:success", actorId, label: actor.name, result });
+    log({ type: "actor:success", actorId: sessionKey, label: actor.name, result });
     return session;
   }
 
@@ -191,23 +190,28 @@ export async function executeWorkspace(workspace, scenarioId, options = {}) {
     const scenario = scenarios.get(id);
     if (!scenario) throw new FlowError(`场景不存在: ${id}`);
     log({ type: "scenario:start", scenarioId: id, label: scenario.name });
-    let currentActorId = null;
+    let currentActor = null;
+    const actorNodes = new Map();
     for (const node of topologicalNodes(scenario)) {
       try {
         if (node.type === "actor") {
-          currentActorId = node.data?.actorId;
-          await ensureActor(currentActorId);
+          const actor = node.data?.actor || actors.get(node.data?.actorId);
+          const sessionKey = node.data?.actor ? node.id : node.data?.actorId;
+          currentActor = { sessionKey, actor };
+          actorNodes.set(node.id, currentActor);
+          await ensureActor(sessionKey, actor);
         } else if (node.type === "action") {
-          const action = actions.get(node.data?.actionId);
-          if (!action) throw new FlowError(`Action 不存在: ${node.data?.actionId}`);
-          const actorId = node.data?.actorId || currentActorId;
-          if (!actorId) throw new FlowError(`Action ${action.name} 没有可用 Actor`);
-          const session = await ensureActor(actorId);
-          log({ type: "action:start", nodeId: node.id, actorId, label: action.name });
+          const action = node.data?.action || actions.get(node.data?.actionId);
+          if (!action) throw new FlowError(`Action 配置不存在: ${node.id}`);
+          const selectedActor = node.data?.actorNodeId ? actorNodes.get(node.data.actorNodeId) : currentActor;
+          if (!selectedActor) throw new FlowError(`Action ${action.name} 没有可用 Actor`);
+          const { sessionKey, actor } = selectedActor;
+          const session = await ensureActor(sessionKey, actor);
+          log({ type: "action:start", nodeId: node.id, actorId: sessionKey, label: action.name });
           const result = await httpRequest({ ...action.request, ...(node.data?.requestOverride || {}) }, context, session.jar, fetchImpl);
           context.steps[node.id] = result;
           if (node.data?.saveAs) context.shared[node.data.saveAs] = result.body;
-          log({ type: result.ok ? "action:success" : "action:failure", nodeId: node.id, actorId, label: action.name, result });
+          log({ type: result.ok ? "action:success" : "action:failure", nodeId: node.id, actorId: sessionKey, label: action.name, result });
           if (!result.ok && node.data?.continueOnFailure !== true) {
             throw new FlowError(`Action ${action.name} 失败: HTTP ${result.status}`, { result });
           }

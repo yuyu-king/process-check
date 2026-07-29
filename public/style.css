@@ -21,6 +21,7 @@ button { color: inherit; }
 .brand { font-weight: 760; letter-spacing: -.02em; margin-right: 10px; }
 .brand small { color: var(--blue); font-weight: 600; margin-left: 7px; }
 .scenario-select { min-width: 220px; }
+.scenario-name { width: 240px; }
 .spacer { flex: 1; }
 button, .button { border: 1px solid var(--line); background: var(--panel-2); border-radius: 8px; padding: 7px 11px; cursor: pointer; }
 button:hover { border-color: #48566d; }
@@ -43,6 +44,10 @@ button:hover { border-color: #48566d; }
 .library-item .meta { min-width: 0; flex: 1; }
 .library-item strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
 .library-item small { color: var(--muted); font-size: 11px; }
+.template-row { display: grid; grid-template-columns: 1fr 28px; align-items: center; gap: 3px; }
+.template-row .library-item { min-width: 0; }
+.template-delete { padding: 2px; border: 0; background: transparent; color: var(--muted); }
+.template-delete:hover { color: var(--red); border: 0; }
 .glyph { width: 26px; height: 26px; border-radius: 7px; display: grid; place-items: center; font-weight: 800; flex: 0 0 auto; }
 .glyph.actor { color: #aebfff; background: #253157; }
 .glyph.action { color: #77e9b2; background: #183e31; }
@@ -55,6 +60,9 @@ button:hover { border-color: #48566d; }
 .edge.active { stroke: var(--blue); stroke-dasharray: 5 5; }
 .node { position: absolute; width: 188px; min-height: 76px; background: #151b24; border: 1px solid #334055; border-radius: 12px; box-shadow: 0 8px 25px #0007; user-select: none; cursor: move; }
 .node.selected { border-color: var(--blue); box-shadow: 0 0 0 2px #5e8cff40, 0 8px 25px #0008; }
+.node-delete { position: absolute; right: 5px; top: 5px; z-index: 4; width: 22px; height: 22px; padding: 0; border: 0; background: transparent; color: transparent; }
+.node:hover .node-delete, .node.selected .node-delete { color: var(--muted); }
+.node-delete:hover { color: var(--red) !important; border: 0; }
 .node-head { display: flex; gap: 9px; align-items: center; padding: 11px; border-bottom: 1px solid #27303e; }
 .node-title { font-size: 13px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .node-subtitle { color: var(--muted); font-size: 11px; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
