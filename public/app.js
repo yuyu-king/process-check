@@ -46,6 +46,8 @@ let runState = "idle";
 let events = [];
 let selectedEvent = null;
 let drag = null;
+let runRevision = 0;
+let activeRunController = null;
 
 function loadWorkspace() {
   try { return normalizeWorkspace(JSON.parse(localStorage.getItem(STORAGE_KEY)) || clone(seed)); }
@@ -72,7 +74,16 @@ function normalizeWorkspace(value) {
   return result;
 }
 function save() {
+  invalidateRunResults();
   localStorage.setItem(STORAGE_KEY, JSON.stringify(workspace));
+}
+function invalidateRunResults() {
+  runRevision += 1;
+  activeRunController?.abort();
+  activeRunController = null;
+  runState = "idle";
+  events = [];
+  selectedEvent = null;
 }
 function currentScenario() {
   return workspace.scenarios.find((item) => item.id === scenarioId);
@@ -397,8 +408,9 @@ function endNodeDrag() {
   if (!drag) return;
   const { node, moved } = drag;
   drag = null;
-  if (!moved) selection = { kind: "node", id: node.id };
-  save(); render();
+  if (moved) save();
+  else selection = { kind: "node", id: node.id };
+  render();
 }
 function saveNodeTemplate(node) {
   const defaultName = nodeLabel(node);
@@ -427,17 +439,30 @@ function deleteEdge(source, target) {
   selection = null; save(); render();
 }
 async function runScenario() {
+  activeRunController?.abort();
+  const controller = new AbortController();
+  activeRunController = controller;
+  const revision = ++runRevision;
+  const workspaceSnapshot = clone(workspace);
   runState = "running"; events = []; selectedEvent = null; render();
   try {
-    const response = await fetch("/api/execute", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ workspace, scenarioId }) });
+    const response = await fetch("/api/execute", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ workspace: workspaceSnapshot, scenarioId }),
+      signal: controller.signal
+    });
     const result = await response.json();
+    if (revision !== runRevision) return;
     events = result.events || [{ type: "node:error", label: result.error || "执行失败", details: result }];
     runState = result.ok ? "success" : "failure";
     selectedEvent = events.length ? events.length - 1 : null;
   } catch (error) {
+    if (revision !== runRevision || error.name === "AbortError") return;
     events = [{ type: "node:error", label: "无法连接本地执行器", error: error.message }];
     runState = "failure"; selectedEvent = 0;
   }
+  if (revision === runRevision) activeRunController = null;
   render();
 }
 function exportJson() {
