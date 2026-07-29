@@ -1,0 +1,4 @@
+interface:
+  display_name: "生成接口验证场景"
+  short_description: "分析后端项目并生成可直接导入的多角色接口链路验证场景"
+  default_prompt: "使用 $generate-api-validation-scenario 分析当前项目，并生成一份可导入 Process Check 的接口验证场景 JSON。"
