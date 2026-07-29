@@ -242,7 +242,7 @@ function renderInspector() {
         ? `<div class="field"><label>请求体 JSON</label><textarea data-config-request-json="body">${escapeHtml(JSON.stringify(action.request.body ?? {}, null, 2))}</textarea></div>`
         : `<p class="hint">GET/HEAD 请求不会发送请求体；查询参数请写在 URL 中。</p>`}
       <div class="field"><label>保存响应 body 到 shared（可选）</label><input data-node-data="saveAs" value="${escapeHtml(node.data.saveAs || "")}" placeholder="project"></div>
-      <p class="hint">变量示例：{{env.baseUrl}}、{{steps.create-project.body.id}}、{{shared.project.id}}</p>`;
+      <p class="hint">变量示例：{{env.baseUrl}}、{{steps.create-project.body.id}}、{{shared.project.id}}、{{random.string}}</p>`;
   }
   if (node.type === "scenario") fields = selectField("子场景", "scenarioId", workspace.scenarios.filter((item) => item.id !== scenarioId), node.data.scenarioId);
   if (node.type === "assert") fields = `

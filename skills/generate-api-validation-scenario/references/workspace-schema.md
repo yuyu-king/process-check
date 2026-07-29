@@ -94,4 +94,12 @@
 
 模板路径支持 `env`、`actor`（仅登录请求）、`steps`、`shared`、`actors`。完整模板如 `{{steps.create.body.id}}` 会保留数字、布尔值或对象类型；嵌入字符串时会转成文本。
 
+每个 HTTP 请求都会生成一组内置随机值：
+
+- `{{random.string}}`：8 位 URL-safe 随机字符串。
+- `{{random.uuid}}`：UUID v4。
+- `{{random.timestamp}}`：当前毫秒时间戳。
+
+同一个请求中重复引用同一路径会得到相同值；下一个 Action 或 Actor 登录请求会生成新值。项目名可写为 `yb-{{random.string}}`。
+
 GET 与 HEAD Action 不发送请求体。查询参数必须放在 URL 中；即使导入 JSON 中保留了 `body`，执行器也会忽略它。

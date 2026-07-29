@@ -1,3 +1,5 @@
+import { randomBytes, randomUUID } from "node:crypto";
+
 const TEMPLATE = /\{\{\s*([^}]+?)\s*\}\}/g;
 
 export class FlowError extends Error {
@@ -100,8 +102,16 @@ function absorbCookies(headers, jar) {
   }
 }
 
+function createRandomValues() {
+  return {
+    string: randomBytes(6).toString("base64url"),
+    uuid: randomUUID(),
+    timestamp: Date.now()
+  };
+}
+
 async function httpRequest(config, context, jar, fetchImpl) {
-  const rendered = renderTemplate(config, context);
+  const rendered = renderTemplate(config, { ...context, random: createRandomValues() });
   const method = String(rendered.method || "GET").toUpperCase();
   const headers = { ...(rendered.headers || {}) };
   if (jar.size && !headers.Cookie && !headers.cookie) headers.Cookie = cookieHeader(jar);

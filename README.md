@@ -31,6 +31,7 @@ npm run demo:api
 - 点击连线后，可在右侧属性面板删除，或按 `Delete` / `Backspace`。
 - GET 与 HEAD 请求始终忽略请求体；查询参数应写入 URL。
 - 修改节点、连线或配置后，上一轮运行结果会立即失效；新运行不会被较早返回的异步结果覆盖。
+- 每次 HTTP 请求提供 `{{random.string}}`（8 位）、`{{random.uuid}}` 和 `{{random.timestamp}}`。同一请求内重复引用保持一致。
 
 ## JSON 与敏感信息
 
