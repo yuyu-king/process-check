@@ -102,10 +102,11 @@ function absorbCookies(headers, jar) {
 
 async function httpRequest(config, context, jar, fetchImpl) {
   const rendered = renderTemplate(config, context);
+  const method = String(rendered.method || "GET").toUpperCase();
   const headers = { ...(rendered.headers || {}) };
   if (jar.size && !headers.Cookie && !headers.cookie) headers.Cookie = cookieHeader(jar);
   let body;
-  if (rendered.body !== undefined && rendered.body !== null) {
+  if (!["GET", "HEAD"].includes(method) && rendered.body !== undefined && rendered.body !== null) {
     if (typeof rendered.body === "string") body = rendered.body;
     else {
       body = JSON.stringify(rendered.body);
@@ -114,7 +115,7 @@ async function httpRequest(config, context, jar, fetchImpl) {
   }
   const startedAt = Date.now();
   const response = await fetchImpl(rendered.url, {
-    method: rendered.method || "GET",
+    method,
     headers,
     body,
     redirect: rendered.redirect || "follow"
@@ -124,7 +125,7 @@ async function httpRequest(config, context, jar, fetchImpl) {
   let parsed = text;
   try { parsed = text ? JSON.parse(text) : null; } catch {}
   return {
-    request: { method: rendered.method || "GET", url: rendered.url, headers: maskHeaders(headers), body: rendered.body },
+    request: { method, url: rendered.url, headers: maskHeaders(headers), body: ["GET", "HEAD"].includes(method) ? undefined : rendered.body },
     status: response.status,
     ok: response.ok,
     headers: Object.fromEntries(response.headers.entries()),

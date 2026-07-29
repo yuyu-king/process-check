@@ -188,7 +188,8 @@ function renderEdges(scenario) {
     if (!source || !target) return "";
     const x1 = source.x + 188, y1 = source.y + 38, x2 = target.x, y2 = target.y + 38;
     const bend = Math.max(60, Math.abs(x2 - x1) * .45);
-    return `<path class="edge" d="M ${x1} ${y1} C ${x1 + bend} ${y1}, ${x2 - bend} ${y2}, ${x2} ${y2}"/>`;
+    const selected = selection?.kind === "edge" && selection.source === edge.source && selection.target === edge.target;
+    return `<path class="edge ${selected ? "selected" : ""}" data-edge-source="${edge.source}" data-edge-target="${edge.target}" d="M ${x1} ${y1} C ${x1 + bend} ${y1}, ${x2 - bend} ${y2}, ${x2} ${y2}"/>`;
   }).join("")}</svg>`;
 }
 
@@ -196,6 +197,14 @@ function renderInspector() {
   if (!selection) return `<h3>属性</h3><p class="muted">选择画布节点进行编辑，或从左侧拖入一个新节点。</p>
     <div class="field"><label>环境变量</label><textarea data-json="environments">${escapeHtml(JSON.stringify(workspace.environments, null, 2))}</textarea></div>
     <div class="field"><label>共享初始变量</label><textarea data-json="variables">${escapeHtml(JSON.stringify(workspace.variables, null, 2))}</textarea></div>`;
+  if (selection.kind === "edge") {
+    const source = currentScenario().nodes.find((item) => item.id === selection.source);
+    const target = currentScenario().nodes.find((item) => item.id === selection.target);
+    return `<h3>连线</h3>
+      <div class="edge-summary"><strong>${escapeHtml(nodeLabel(source))}</strong><span>→</span><strong>${escapeHtml(nodeLabel(target))}</strong></div>
+      <p class="hint">选中连线后，也可以按 Delete 或 Backspace 删除。</p>
+      <div class="inspector-actions"><button class="danger" id="deleteEdge">删除连线</button></div>`;
+  }
   const node = currentScenario().nodes.find((item) => item.id === selection.id);
   if (!node) return "";
   const common = `<div class="field"><label>节点 ID（变量路径使用此值）</label><input data-node-field="id" value="${escapeHtml(node.id)}"></div>`;
@@ -212,12 +221,15 @@ function renderInspector() {
   if (node.type === "action") {
     const action = node.data.action;
     const actors = currentScenario().nodes.filter((item) => item.type === "actor");
+    const supportsBody = !["GET", "HEAD"].includes(String(action.request.method).toUpperCase());
     fields = `<div class="field"><label>名称</label><input data-config-field="name" value="${escapeHtml(action.name)}"></div>
       <div class="row"><div class="field"><label>方法</label><select data-config-request-field="method">${["GET","POST","PUT","PATCH","DELETE"].map((method) => `<option ${action.request.method === method ? "selected" : ""}>${method}</option>`).join("")}</select></div>
       <div class="field"><label>地址</label><input data-config-request-field="url" value="${escapeHtml(action.request.url)}"></div></div>
       <div class="field"><label>指定 Actor（留空则使用链路中最近 Actor）</label><select data-node-data="actorNodeId"><option value="">自动</option>${actors.map((item) => `<option value="${item.id}" ${node.data.actorNodeId === item.id ? "selected" : ""}>${escapeHtml(nodeLabel(item))}</option>`).join("")}</select></div>
       <div class="field"><label>请求头 JSON</label><textarea data-config-request-json="headers">${escapeHtml(JSON.stringify(action.request.headers || {}, null, 2))}</textarea></div>
-      <div class="field"><label>请求体 JSON</label><textarea data-config-request-json="body">${escapeHtml(JSON.stringify(action.request.body ?? {}, null, 2))}</textarea></div>
+      ${supportsBody
+        ? `<div class="field"><label>请求体 JSON</label><textarea data-config-request-json="body">${escapeHtml(JSON.stringify(action.request.body ?? {}, null, 2))}</textarea></div>`
+        : `<p class="hint">GET/HEAD 请求不会发送请求体；查询参数请写在 URL 中。</p>`}
       <div class="field"><label>保存响应 body 到 shared（可选）</label><input data-node-data="saveAs" value="${escapeHtml(node.data.saveAs || "")}" placeholder="project"></div>
       <p class="hint">变量示例：{{env.baseUrl}}、{{steps.create-project.body.id}}、{{shared.project.id}}</p>`;
   }
@@ -283,6 +295,11 @@ function bindEvents() {
   document.querySelectorAll("[data-node-delete]").forEach((button) => button.onclick = (event) => {
     event.stopPropagation(); deleteNode(button.dataset.nodeDelete);
   });
+  document.querySelectorAll("[data-edge-source]").forEach((edge) => edge.onclick = (event) => {
+    event.stopPropagation();
+    selection = { kind: "edge", source: edge.dataset.edgeSource, target: edge.dataset.edgeTarget };
+    render();
+  });
   document.querySelectorAll("[data-port-out]").forEach((port) => port.onclick = (event) => {
     event.stopPropagation(); pendingEdgeSource = port.dataset.portOut; render();
   });
@@ -297,10 +314,25 @@ function bindEvents() {
   });
   bindInspectorEvents();
   document.querySelectorAll("[data-event]").forEach((row) => row.onclick = () => { selectedEvent = Number(row.dataset.event); render(); });
+  document.onkeydown = (event) => {
+    if (!["Delete", "Backspace"].includes(event.key)) return;
+    if (["INPUT", "TEXTAREA", "SELECT"].includes(event.target.tagName) || event.target.isContentEditable) return;
+    if (selection?.kind === "edge") {
+      event.preventDefault();
+      deleteEdge(selection.source, selection.target);
+    } else if (selection?.kind === "node") {
+      event.preventDefault();
+      deleteNode(selection.id);
+    }
+  };
 }
 
 function bindInspectorEvents() {
   document.querySelectorAll("[data-json]").forEach((field) => field.onchange = () => updateJson(field, workspace, field.dataset.json));
+  if (selection?.kind === "edge") {
+    document.querySelector("#deleteEdge")?.addEventListener("click", () => deleteEdge(selection.source, selection.target));
+    return;
+  }
   if (selection?.kind === "node") {
     const node = currentScenario().nodes.find((item) => item.id === selection.id);
     document.querySelectorAll("[data-node-data]").forEach((field) => field.onchange = () => { node.data[field.dataset.nodeData] = field.value; save(); render(); });
@@ -387,6 +419,11 @@ function deleteNode(id) {
   const scenario = currentScenario();
   scenario.nodes = scenario.nodes.filter((node) => node.id !== id);
   scenario.edges = scenario.edges.filter((edge) => edge.source !== id && edge.target !== id);
+  selection = null; save(); render();
+}
+function deleteEdge(source, target) {
+  const scenario = currentScenario();
+  scenario.edges = scenario.edges.filter((edge) => edge.source !== source || edge.target !== target);
   selection = null; save(); render();
 }
 async function runScenario() {

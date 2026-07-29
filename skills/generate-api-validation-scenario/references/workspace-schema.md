@@ -93,3 +93,5 @@
 `templates.actors[]` 与 `templates.actions[]` 的结构为 `{ "id", "name", "config" }`，其中 `config` 分别等同于 `data.actor` 或 `data.action`。自动生成场景时通常保持模板数组为空，除非用户明确要求同时创建模板。
 
 模板路径支持 `env`、`actor`（仅登录请求）、`steps`、`shared`、`actors`。完整模板如 `{{steps.create.body.id}}` 会保留数字、布尔值或对象类型；嵌入字符串时会转成文本。
+
+GET 与 HEAD Action 不发送请求体。查询参数必须放在 URL 中；即使导入 JSON 中保留了 `body`，执行器也会忽略它。

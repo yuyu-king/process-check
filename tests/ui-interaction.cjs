@@ -40,7 +40,16 @@ const { chromium } = require("playwright");
 
     await page.locator("#deleteNode").click();
     assert.equal(await page.locator(".node").count(), before, "应能从属性面板删除节点");
-    console.log("PASS: 场景命名、节点选择/删除、实例创建与模板保存");
+
+    const edge = page.locator('[data-edge-source="use-a"][data-edge-target="create-project"]');
+    const edgeBox = await edge.boundingBox();
+    await page.mouse.click(edgeBox.x + edgeBox.width / 2, edgeBox.y + edgeBox.height / 2);
+    assert.equal(await page.locator(".edge.selected").count(), 1, "点击连线后应被选中");
+    assert.equal(await page.locator("#deleteEdge").count(), 1, "选中连线后应显示删除按钮");
+    await page.locator("#deleteEdge").click();
+    assert.equal(await page.locator('[data-edge-source="use-a"][data-edge-target="create-project"]').count(), 0, "应能删除连线");
+
+    console.log("PASS: 场景命名、节点/连线删除、实例创建与模板保存");
   } finally {
     if (browser) await browser.close();
     server.kill();
