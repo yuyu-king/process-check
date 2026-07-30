@@ -27,6 +27,11 @@ const { chromium } = require("playwright");
     assert.equal(await page.locator('[data-node-id="use-a"].selected').count(), 1, "点击后节点应被选中");
     assert.equal(await page.locator("#deleteNode").count(), 1, "选中后应显示删除按钮");
 
+    await page.locator("[data-auth-enabled]").setChecked(true);
+    assert.equal(await page.locator('[data-auth-field="tokenPath"]').count(), 1, "Actor 应支持配置 Token 提取路径");
+    await page.locator('[data-auth-field="tokenPath"]').fill("body.data.accessToken");
+    await page.locator('[data-auth-field="tokenPath"]').press("Tab");
+
     page.once("dialog", (dialog) => dialog.accept("主管登录模板"));
     await page.locator("#saveTemplate").click();
     assert.equal(await page.locator('[data-template-id]').count(), 1, "已配置节点应能保存为模板");

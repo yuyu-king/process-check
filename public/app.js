@@ -106,6 +106,15 @@ function nodeSubtitle(node) {
   if (node.type === "scenario") return "执行并共享变量";
   return `${node.data.operator || "equals"} ${JSON.stringify(node.data.expected)}`;
 }
+function ensureActorAuth(actor) {
+  actor.auth ||= {
+    enabled: false,
+    tokenPath: "body.token",
+    headerName: "Authorization",
+    prefix: "Bearer "
+  };
+  return actor.auth;
+}
 function glyph(type) {
   return { actor: "A", action: "→", assert: "✓", scenario: "S" }[type];
 }
@@ -222,12 +231,22 @@ function renderInspector() {
   let fields = "";
   if (node.type === "actor") {
     const actor = node.data.actor;
+    const auth = ensureActorAuth(actor);
     fields = `<div class="field"><label>名称</label><input data-config-field="name" value="${escapeHtml(actor.name)}"></div>
       <div class="row"><div class="field"><label>登录方法</label><select data-config-request-field="method">${["POST","GET","PUT","PATCH"].map((method) => `<option ${actor.login.method === method ? "selected" : ""}>${method}</option>`).join("")}</select></div>
       <div class="field"><label>登录地址</label><input data-config-request-field="url" value="${escapeHtml(actor.login.url)}"></div></div>
       <div class="field"><label>Actor 变量</label><textarea data-config-json="variables">${escapeHtml(JSON.stringify(actor.variables || {}, null, 2))}</textarea></div>
       <div class="field"><label>请求头 JSON</label><textarea data-config-request-json="headers">${escapeHtml(JSON.stringify(actor.login.headers || {}, null, 2))}</textarea></div>
-      <div class="field"><label>请求体 JSON</label><textarea data-config-request-json="body">${escapeHtml(JSON.stringify(actor.login.body || {}, null, 2))}</textarea></div>`;
+      <div class="field"><label>请求体 JSON</label><textarea data-config-request-json="body">${escapeHtml(JSON.stringify(actor.login.body || {}, null, 2))}</textarea></div>
+      <div class="auth-box">
+        <label class="check-row"><input type="checkbox" data-auth-enabled ${auth.enabled ? "checked" : ""}> 将登录响应中的 Token 自动注入后续 Action</label>
+        ${auth.enabled ? `
+          <div class="field"><label>Token 路径（相对于完整登录响应）</label><input data-auth-field="tokenPath" value="${escapeHtml(auth.tokenPath)}" placeholder="body.data.accessToken"></div>
+          <div class="field"><label>Header 名称</label><input data-auth-field="headerName" value="${escapeHtml(auth.headerName)}" placeholder="Authorization"></div>
+          <div class="field"><label>值前缀</label><input data-auth-field="prefix" value="${escapeHtml(auth.prefix)}" placeholder="Bearer "></div>
+          <p class="hint">例如登录响应为 {"data":{"accessToken":"..."}}，Token 路径填写 body.data.accessToken。</p>
+        ` : ""}
+      </div>`;
   }
   if (node.type === "action") {
     const action = node.data.action;
@@ -357,6 +376,15 @@ function bindInspectorEvents() {
     document.querySelectorAll("[data-config-json]").forEach((field) => field.onchange = () => updateJson(field, config, field.dataset.configJson));
     document.querySelectorAll("[data-config-request-field]").forEach((field) => field.onchange = () => { request[field.dataset.configRequestField] = field.value; save(); render(); });
     document.querySelectorAll("[data-config-request-json]").forEach((field) => field.onchange = () => updateJson(field, request, field.dataset.configRequestJson));
+    if (node.type === "actor") {
+      const auth = ensureActorAuth(config);
+      document.querySelector("[data-auth-enabled]")?.addEventListener("change", (event) => {
+        auth.enabled = event.target.checked; save(); render();
+      });
+      document.querySelectorAll("[data-auth-field]").forEach((field) => field.onchange = () => {
+        auth[field.dataset.authField] = field.value; save(); render();
+      });
+    }
     document.querySelector("#saveTemplate")?.addEventListener("click", () => saveNodeTemplate(node));
     document.querySelector("#deleteNode")?.addEventListener("click", () => deleteNode(node.id));
   }
@@ -380,7 +408,7 @@ function dropNode(event) {
   const rect = document.querySelector(".canvas-inner").getBoundingClientRect();
   const id = uid(payload.type);
   const savedTemplate = payload.templateId ? template(payload.type, payload.templateId) : null;
-  const data = payload.type === "actor" ? { actor: savedTemplate ? clone(savedTemplate.config) : { name: "新 Actor", variables: { username: "", password: "" }, login: { method: "POST", url: "{{env.baseUrl}}/login", headers: {}, body: {} } } }
+  const data = payload.type === "actor" ? { actor: savedTemplate ? clone(savedTemplate.config) : { name: "新 Actor", variables: { username: "", password: "" }, login: { method: "POST", url: "{{env.baseUrl}}/login", headers: {}, body: {} }, auth: { enabled: false, tokenPath: "body.token", headerName: "Authorization", prefix: "Bearer " } } }
     : payload.type === "action" ? { action: savedTemplate ? clone(savedTemplate.config) : { name: "新 Action", request: { method: "GET", url: "{{env.baseUrl}}/", headers: {}, body: {} } } }
     : payload.type === "scenario" ? { scenarioId: workspace.scenarios.find((item) => item.id !== scenarioId)?.id || "" }
     : { label: "响应状态正确", actual: "{{steps.action-id.status}}", operator: "equals", expected: 200 };

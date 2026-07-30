@@ -40,6 +40,12 @@
                   "username": "{{actor.username}}",
                   "password": "{{actor.password}}"
                 }
+              },
+              "auth": {
+                "enabled": true,
+                "tokenPath": "body.data.accessToken",
+                "headerName": "Authorization",
+                "prefix": "Bearer "
               }
             }
           }
@@ -85,12 +91,21 @@
 
 ## Node types
 
-- `actor`: `data.actor` 包含名称、变量和登录请求。Actor 节点拥有独立会话；第一次执行时登录，后续 Action 复用 Cookie。
+- `actor`: `data.actor` 包含名称、变量和登录请求。Actor 节点拥有独立会话；第一次执行时登录，后续 Action 复用 Cookie。可选 `auth` 从登录响应提取 Token 并自动注入 Action Header。
 - `action`: `data.action` 包含名称与 HTTP 请求。可选 `data.actorNodeId` 固定使用某个 Actor 节点；可选 `data.saveAs` 把响应 body 写入 `shared.<saveAs>`。
 - `assert`: `data.actual` 和 `data.expected` 均支持模板。`operator` 可用 `equals`、`notEquals`、`exists`、`truthy`、`contains`、`greaterThan`、`matches`。
 - `scenario`: `data.scenarioId` 引用另一个场景；共享 `steps`、`shared` 和 Actor 会话。
 
 `templates.actors[]` 与 `templates.actions[]` 的结构为 `{ "id", "name", "config" }`，其中 `config` 分别等同于 `data.actor` 或 `data.action`。自动生成场景时通常保持模板数组为空，除非用户明确要求同时创建模板。
+
+Actor Token 注入配置：
+
+- `auth.enabled`: 是否启用。
+- `auth.tokenPath`: 相对于完整登录结果的路径，登录接口 Body 为 `{"data":{"accessToken":"..."}}` 时填写 `body.data.accessToken`。
+- `auth.headerName`: 默认 `Authorization`。
+- `auth.prefix`: 默认 `Bearer `。
+
+Action 显式配置同名 Header 时覆盖 Actor 自动值。
 
 模板路径支持 `env`、`actor`（仅登录请求）、`steps`、`shared`、`actors`。完整模板如 `{{steps.create.body.id}}` 会保留数字、布尔值或对象类型；嵌入字符串时会转成文本。
 

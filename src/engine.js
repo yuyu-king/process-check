@@ -164,6 +164,33 @@ function assertionPass(operator, actual, expected) {
   }
 }
 
+function buildActorHeaders(actor, loginResult) {
+  const auth = actor?.auth;
+  if (!auth?.enabled) return {};
+  const token = readPath(loginResult, auth.tokenPath || "body.token");
+  if (token === undefined || token === null || token === "") {
+    throw new FlowError(`Actor ${actor.name} 无法从登录响应提取 Token: ${auth.tokenPath || "body.token"}`);
+  }
+  return {
+    [auth.headerName || "Authorization"]: `${auth.prefix || ""}${token}`
+  };
+}
+
+function mergeHeaders(...sources) {
+  const result = {};
+  const keys = new Map();
+  for (const source of sources) {
+    for (const [key, value] of Object.entries(source || {})) {
+      const normalized = key.toLowerCase();
+      const previous = keys.get(normalized);
+      if (previous && previous !== key) delete result[previous];
+      keys.set(normalized, key);
+      result[key] = value;
+    }
+  }
+  return result;
+}
+
 export async function executeWorkspace(workspace, scenarioId, options = {}) {
   const errors = validateWorkspace(workspace);
   if (errors.length) throw new FlowError("工作区 JSON 无效", { errors });
@@ -219,7 +246,17 @@ export async function executeWorkspace(workspace, scenarioId, options = {}) {
           const { sessionKey, actor } = selectedActor;
           const session = await ensureActor(sessionKey, actor);
           log({ type: "action:start", nodeId: node.id, actorId: sessionKey, label: action.name });
-          const result = await httpRequest({ ...action.request, ...(node.data?.requestOverride || {}) }, context, session.jar, fetchImpl);
+          const requestOverride = node.data?.requestOverride || {};
+          const requestConfig = {
+            ...action.request,
+            ...requestOverride,
+            headers: mergeHeaders(
+              buildActorHeaders(actor, context.actors[sessionKey]?.login),
+              action.request?.headers,
+              requestOverride.headers
+            )
+          };
+          const result = await httpRequest(requestConfig, context, session.jar, fetchImpl);
           context.steps[node.id] = result;
           if (node.data?.saveAs) context.shared[node.data.saveAs] = result.body;
           log({ type: result.ok ? "action:success" : "action:failure", nodeId: node.id, actorId: sessionKey, label: action.name, result });

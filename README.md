@@ -21,6 +21,7 @@ npm run demo:api
 ## 运行语义
 
 - Actor 第一次被执行时先调用自己的登录接口；该 Actor 后续 Action 自动携带同一次运行中的 Cookie。
+- Actor 可从登录响应提取 Token，并自动向后续 Action 注入 Authorization 或其他 Header；Action 显式配置同名 Header 时优先。
 - 不同 Actor 使用相互隔离的 Cookie jar。
 - Action 结果写入 `steps.<节点ID>`，包含 `status`、`headers`、`body`、`durationMs`。
 - `{{steps.create-project.body.id}}` 这类模板可用于后续 URL、请求头、请求体和断言。
@@ -32,6 +33,18 @@ npm run demo:api
 - GET 与 HEAD 请求始终忽略请求体；查询参数应写入 URL。
 - 修改节点、连线或配置后，上一轮运行结果会立即失效；新运行不会被较早返回的异步结果覆盖。
 - 每次 HTTP 请求提供 `{{random.string}}`（8 位）、`{{random.uuid}}` 和 `{{random.timestamp}}`。同一请求内重复引用保持一致。
+
+## Actor Token 自动注入
+
+在 Actor 属性面板启用“将登录响应中的 Token 自动注入后续 Action”，然后填写：
+
+```text
+Token 路径：body.data.accessToken
+Header 名称：Authorization
+值前缀：`Bearer `
+```
+
+当登录响应为 `{"data":{"accessToken":"abc123"}}` 时，该 Actor 后续 Action 会自动携带 `Authorization: Bearer abc123`，无需额外创建获取 Token 的 Action。
 
 ## JSON 与敏感信息
 

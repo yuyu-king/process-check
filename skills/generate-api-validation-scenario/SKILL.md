@@ -10,7 +10,7 @@ Generate a safe, evidence-based Process Check workspace from the target project.
 ## Workflow
 
 1. Inspect the repository's route declarations, controllers, request/response types, authentication code, tests, API specs, and environment examples. Prefer implementation and tests over guesses.
-2. Identify the requested actors, their roles, login request, and session mechanism. Use placeholder credentials only; never copy real secrets.
+2. Identify the requested actors, their roles, login request, session mechanism, and token response path. When later APIs use the login token, configure Actor `auth` injection instead of generating a separate token Action. Use placeholder credentials only; never copy real secrets.
 3. Trace the business workflow end to end. Record each request's method, URL, body, expected status, output fields consumed later, and externally visible side effects.
 4. Read [references/workspace-schema.md](references/workspace-schema.md) before generating JSON.
 5. Create Actor and Action node instances with inline configuration. Use stable lowercase kebab-case node IDs. Keep `templates` empty unless the user explicitly asks to save reusable templates.
