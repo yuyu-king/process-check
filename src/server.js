@@ -2,7 +2,7 @@ import http from "node:http";
 import { readFile, stat } from "node:fs/promises";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
-import { executeWorkspace } from "./engine.js";
+import { executeCaseSet, executeWorkspace } from "./engine.js";
 
 const root = join(fileURLToPath(new URL("..", import.meta.url)), "public");
 const port = Number(process.env.PORT || 4399);
@@ -34,6 +34,11 @@ const server = http.createServer(async (request, response) => {
     if (request.method === "POST" && url.pathname === "/api/execute") {
       const { workspace, scenarioId } = await bodyJson(request);
       const result = await executeWorkspace(workspace, scenarioId);
+      return sendJson(response, 200, result);
+    }
+    if (request.method === "POST" && url.pathname === "/api/execute-case-set") {
+      const { workspace, caseSetId } = await bodyJson(request);
+      const result = await executeCaseSet(workspace, caseSetId);
       return sendJson(response, 200, result);
     }
     if (request.method !== "GET") return sendJson(response, 405, { error: "Method not allowed" });

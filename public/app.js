@@ -3,7 +3,7 @@ const uid = (prefix) => `${prefix}-${Math.random().toString(36).slice(2, 8)}`;
 const clone = (value) => JSON.parse(JSON.stringify(value));
 
 const seed = {
-  version: 2,
+  version: 3,
   name: "项目审批链路验证",
   activeEnvironment: "local",
   environments: {
@@ -11,6 +11,7 @@ const seed = {
   },
   variables: {},
   templates: { actors: [], actions: [] },
+  caseSets: [],
   scenarios: [
     {
       id: "scenario-full-approval",
@@ -40,6 +41,12 @@ const seed = {
 
 let workspace = loadWorkspace();
 let scenarioId = workspace.scenarios[0]?.id;
+let viewMode = "flow";
+let caseSetId = workspace.caseSets[0]?.id;
+let selectedCaseId = null;
+let caseRunState = "idle";
+let caseResults = [];
+let selectedCaseResultId = null;
 let selection = null;
 let pendingEdgeSource = null;
 let runState = "idle";
@@ -58,6 +65,16 @@ function normalizeWorkspace(value) {
   result.templates ||= { actors: [], actions: [] };
   result.templates.actors ||= [];
   result.templates.actions ||= [];
+  result.caseSets ||= [];
+  for (const caseSet of result.caseSets) {
+    caseSet.actorTemplateId ||= "";
+    caseSet.actionTemplateId ||= "";
+    caseSet.cases ||= [];
+    for (const testCase of caseSet.cases) {
+      testCase.overrides ||= {};
+      testCase.assertions ||= [];
+    }
+  }
   if ((result.version || 1) < 2 || result.actors || result.actions) {
     const actors = new Map((result.actors || []).map((item) => [item.id, item]));
     const actions = new Map((result.actions || []).map((item) => [item.id, item]));
@@ -70,7 +87,7 @@ function normalizeWorkspace(value) {
     delete result.actors;
     delete result.actions;
   }
-  result.version = 2;
+  result.version = 3;
   return result;
 }
 function save() {
@@ -84,9 +101,15 @@ function invalidateRunResults() {
   runState = "idle";
   events = [];
   selectedEvent = null;
+  caseRunState = "idle";
+  caseResults = [];
+  selectedCaseResultId = null;
 }
 function currentScenario() {
   return workspace.scenarios.find((item) => item.id === scenarioId);
+}
+function currentCaseSet() {
+  return workspace.caseSets.find((item) => item.id === caseSetId);
 }
 function template(type, id) {
   return workspace.templates?.[`${type}s`]?.find((item) => item.id === id);
@@ -113,6 +136,11 @@ function ensureActorAuth(actor) {
     headerName: "Authorization",
     prefix: "Bearer "
   };
+  actor.auth.request ||= {
+    method: "GET",
+    url: "",
+    headers: {}
+  };
   return actor.auth;
 }
 function glyph(type) {
@@ -123,11 +151,19 @@ function escapeHtml(value) {
 }
 
 function render() {
+  if (viewMode === "cases") {
+    renderCaseSets();
+    return;
+  }
   const scenario = currentScenario();
   document.querySelector("#app").innerHTML = `
     <main class="app">
       <header class="topbar">
         <div class="brand">Process Check <small>PROTOTYPE</small></div>
+        <nav class="mode-tabs">
+          <button class="mode-tab active" data-mode="flow">流程验证</button>
+          <button class="mode-tab" data-mode="cases">接口用例集</button>
+        </nav>
         <select id="scenarioSelect" class="scenario-select">
           ${workspace.scenarios.map((item) => `<option value="${item.id}" ${item.id === scenarioId ? "selected" : ""}>${escapeHtml(item.name)}</option>`).join("")}
         </select>
@@ -154,6 +190,129 @@ function render() {
       ${renderLogs()}
     </main>`;
   bindEvents();
+}
+
+function renderCaseSets() {
+  const caseSet = currentCaseSet();
+  document.querySelector("#app").innerHTML = `
+    <main class="app">
+      <header class="topbar">
+        <div class="brand">Process Check <small>PROTOTYPE</small></div>
+        <nav class="mode-tabs">
+          <button class="mode-tab" data-mode="flow">流程验证</button>
+          <button class="mode-tab active" data-mode="cases">接口用例集</button>
+        </nav>
+        <select id="caseSetSelect" class="scenario-select" ${caseSet ? "" : "disabled"}>
+          ${workspace.caseSets.map((item) => `<option value="${item.id}" ${item.id === caseSetId ? "selected" : ""}>${escapeHtml(item.name)}</option>`).join("")}
+        </select>
+        <input id="caseSetName" class="scenario-name" value="${escapeHtml(caseSet?.name || "")}" placeholder="输入用例集名称" ${caseSet ? "" : "disabled"}>
+        <button id="addCaseSet">＋ 用例集</button>
+        <span class="status ${caseRunState}">${caseStatusText()}</span>
+        <div class="spacer"></div>
+        <button id="importButton">导入 JSON</button>
+        <button id="exportButton">导出 JSON</button>
+        <button id="runCaseSetButton" class="primary" ${caseSet ? "" : "disabled"}>▶ 批量运行</button>
+        <input id="fileInput" class="hidden" type="file" accept=".json,application/json">
+      </header>
+      ${caseSet ? renderCaseSetWorkspace(caseSet) : `
+        <section class="case-empty">
+          <div><strong>创建第一个接口用例集</strong><p>选择已有的 Actor 和 Action 模板，再为同一个接口添加多组参数与断言。</p><button id="emptyAddCaseSet" class="primary">＋ 新建用例集</button></div>
+        </section>`}
+      ${renderCaseResults()}
+    </main>`;
+  bindCaseSetEvents();
+}
+
+function renderCaseSetWorkspace(caseSet) {
+  const selectedCase = caseSet.cases.find((item) => item.id === selectedCaseId);
+  return `<section class="case-workspace">
+    <aside class="sidebar">
+      <div class="section">
+        <div class="section-head"><h3>执行配置</h3></div>
+        <div class="field"><label>Actor 模板（可选）</label>
+          <select id="caseActorTemplate"><option value="">匿名，无需登录</option>${workspace.templates.actors.map((item) =>
+            `<option value="${item.id}" ${caseSet.actorTemplateId === item.id ? "selected" : ""}>${escapeHtml(item.name)}</option>`).join("")}</select>
+        </div>
+        <div class="field"><label>Action 模板</label>
+          <select id="caseActionTemplate"><option value="">请选择 Action 模板</option>${workspace.templates.actions.map((item) =>
+            `<option value="${item.id}" ${caseSet.actionTemplateId === item.id ? "selected" : ""}>${escapeHtml(item.name)}</option>`).join("")}</select>
+        </div>
+        ${workspace.templates.actions.length ? "" : `<p class="hint">请先在“流程验证”中配置一个 Action 节点，并保存为模板。</p>`}
+      </div>
+      <div class="section">
+        <div class="section-head"><h3>用例</h3><button id="addCase" class="icon-btn">＋</button></div>
+        <div class="case-list">${caseSet.cases.map((item) => {
+          const result = caseResults.find((entry) => entry.id === item.id);
+          return `<button class="case-list-item ${selectedCaseId === item.id ? "selected" : ""}" data-case-id="${item.id}">
+            <span class="case-enabled ${item.enabled === false ? "disabled" : ""}"></span>
+            <span>${escapeHtml(item.name)}</span>
+            ${result ? `<small class="${result.ok ? "success-text" : "failure-text"}">${result.ok ? "通过" : "失败"}</small>` : ""}
+          </button>`;
+        }).join("") || `<p class="hint">添加一条用例，为接口配置不同的输入和预期结果。</p>`}</div>
+      </div>
+    </aside>
+    <div class="case-main">
+      <div class="case-main-head">
+        <div><h2>${escapeHtml(caseSet.name)}</h2><p>每一行使用相同 Action 模板，仅覆盖不同的请求参数和断言。</p></div>
+        <button id="addCaseMain">＋ 添加用例</button>
+      </div>
+      <div class="case-table-wrap">
+        <table class="case-table">
+          <thead><tr><th>启用</th><th>用例名称</th><th>参数覆盖</th><th>断言</th><th>结果</th></tr></thead>
+          <tbody>${caseSet.cases.map((item) => {
+            const result = caseResults.find((entry) => entry.id === item.id);
+            return `<tr data-case-row="${item.id}" class="${selectedCaseId === item.id ? "selected" : ""}">
+              <td>${item.enabled === false ? "—" : "✓"}</td>
+              <td><strong>${escapeHtml(item.name)}</strong></td>
+              <td><code>${escapeHtml(summarizeJson(item.overrides))}</code></td>
+              <td>${escapeHtml(summarizeAssertions(item.assertions))}</td>
+              <td>${!result ? `<span class="muted">未运行</span>` : `<button class="result-pill ${result.ok ? "passed" : "failed"}" data-result-id="${item.id}">${result.ok ? "通过" : "失败"}</button>`}</td>
+            </tr>`;
+          }).join("") || `<tr><td colspan="5" class="table-empty">还没有用例，点击“添加用例”开始。</td></tr>`}</tbody>
+        </table>
+      </div>
+    </div>
+    <aside class="inspector">${renderCaseInspector(selectedCase)}</aside>
+  </section>`;
+}
+
+function renderCaseInspector(testCase) {
+  if (!testCase) return `<h3>用例编辑</h3><p class="muted">选择表格中的一条用例进行编辑。</p>
+    <p class="hint">参数覆盖会与 Action 模板的请求配置进行深度合并。可以只填写需要变化的 URL、Header 或 Body 字段。</p>`;
+  return `<h3>用例编辑</h3>
+    <label class="check-row case-check"><input type="checkbox" id="caseEnabled" ${testCase.enabled === false ? "" : "checked"}> 批量运行时启用</label>
+    <div class="field"><label>用例名称</label><input id="caseName" value="${escapeHtml(testCase.name)}"></div>
+    <div class="field"><label>参数覆盖 JSON</label><textarea id="caseOverrides" class="case-json">${escapeHtml(JSON.stringify(testCase.overrides || {}, null, 2))}</textarea></div>
+    <p class="hint">示例：{"body":{"projectName":"yb-{{random.string}}"}}。GET 查询参数可以覆盖 url。</p>
+    <div class="field"><label>断言 JSON</label><textarea id="caseAssertions" class="case-json">${escapeHtml(JSON.stringify(testCase.assertions || [], null, 2))}</textarea></div>
+    <p class="hint">source 相对于响应，例如 status、body.success、body.data.id。</p>
+    <div class="inspector-actions"><button id="duplicateCase">复制用例</button><button id="deleteCase" class="danger">删除用例</button></div>`;
+}
+
+function renderCaseResults() {
+  const result = caseResults.find((item) => item.id === selectedCaseResultId);
+  return `<section class="logs case-results">
+    <div class="log-list">${caseResults.length ? caseResults.map((item) =>
+      `<div class="log-row ${selectedCaseResultId === item.id ? "selected" : ""}" data-case-result="${item.id}">
+        <span class="log-dot ${item.ok ? "success" : "failure"}"></span><span>${escapeHtml(item.name)}</span><small class="${item.ok ? "success-text" : "failure-text"}">${item.ok ? "通过" : "失败"}</small>
+      </div>`).join("") : `<span class="muted">批量运行后，这里会显示每条用例的请求、响应和断言结果。</span>`}</div>
+    <div class="log-detail"><pre>${result ? escapeHtml(JSON.stringify(result, null, 2)) : "选择一条运行结果查看详情。"}</pre></div>
+  </section>`;
+}
+
+function summarizeJson(value) {
+  const text = JSON.stringify(value || {});
+  return text.length > 72 ? `${text.slice(0, 69)}...` : text;
+}
+function summarizeAssertions(assertions) {
+  if (!assertions?.length) return "HTTP 请求成功";
+  return assertions.map((item) => `${item.source || "ok"} ${item.operator || "equals"} ${JSON.stringify(item.expected)}`).join("；");
+}
+function caseStatusText() {
+  if (caseRunState === "running") return "批量运行中…";
+  if (caseRunState === "success") return `${caseResults.filter((item) => item.ok).length}/${caseResults.length} 通过`;
+  if (caseRunState === "failure") return `${caseResults.filter((item) => item.ok).length}/${caseResults.length} 通过`;
+  return "未运行";
 }
 
 function renderSidebar() {
@@ -239,12 +398,20 @@ function renderInspector() {
       <div class="field"><label>请求头 JSON</label><textarea data-config-request-json="headers">${escapeHtml(JSON.stringify(actor.login.headers || {}, null, 2))}</textarea></div>
       <div class="field"><label>请求体 JSON</label><textarea data-config-request-json="body">${escapeHtml(JSON.stringify(actor.login.body || {}, null, 2))}</textarea></div>
       <div class="auth-box">
-        <label class="check-row"><input type="checkbox" data-auth-enabled ${auth.enabled ? "checked" : ""}> 将登录响应中的 Token 自动注入后续 Action</label>
+        <label class="check-row"><input type="checkbox" data-auth-enabled ${auth.enabled ? "checked" : ""}> 自动获取 Token 并注入后续 Action</label>
         ${auth.enabled ? `
-          <div class="field"><label>Token 路径（相对于完整登录响应）</label><input data-auth-field="tokenPath" value="${escapeHtml(auth.tokenPath)}" placeholder="body.data.accessToken"></div>
+          <div class="auth-request">
+            <div class="row"><div class="field"><label>Token 请求方法</label><select data-auth-request-field="method">${["GET","POST","PUT","PATCH"].map((method) => `<option ${auth.request.method === method ? "selected" : ""}>${method}</option>`).join("")}</select></div>
+            <div class="field"><label>Token 接口地址（可选）</label><input data-auth-request-field="url" value="${escapeHtml(auth.request.url)}" placeholder="{{env.baseUrl}}/token"></div></div>
+            <div class="field"><label>Token 请求头 JSON</label><textarea data-auth-request-json="headers">${escapeHtml(JSON.stringify(auth.request.headers || {}, null, 2))}</textarea></div>
+            ${["GET", "HEAD"].includes(String(auth.request.method).toUpperCase())
+              ? `<p class="hint">GET/HEAD Token 请求不会发送请求体；查询参数请写在 URL 中。</p>`
+              : `<div class="field"><label>Token 请求体 JSON</label><textarea data-auth-request-json="body">${escapeHtml(JSON.stringify(auth.request.body ?? {}, null, 2))}</textarea></div>`}
+          </div>
+          <div class="field"><label>Token 路径（相对于完整 Token 响应）</label><input data-auth-field="tokenPath" value="${escapeHtml(auth.tokenPath)}" placeholder="body.data.accessToken"></div>
           <div class="field"><label>Header 名称</label><input data-auth-field="headerName" value="${escapeHtml(auth.headerName)}" placeholder="Authorization"></div>
           <div class="field"><label>值前缀</label><input data-auth-field="prefix" value="${escapeHtml(auth.prefix)}" placeholder="Bearer "></div>
-          <p class="hint">例如登录响应为 {"data":{"accessToken":"..."}}，Token 路径填写 body.data.accessToken。</p>
+          <p class="hint">填写 Token 接口地址时，将在登录后调用它，并从其响应提取 Token；地址留空则兼容旧方式，从登录响应提取。</p>
         ` : ""}
       </div>`;
   }
@@ -294,6 +461,7 @@ function statusText() {
 }
 
 function bindEvents() {
+  bindModeTabs();
   document.querySelector("#scenarioSelect").onchange = (event) => { scenarioId = event.target.value; selection = null; pendingEdgeSource = null; render(); };
   document.querySelector("#scenarioName").onchange = (event) => {
     currentScenario().name = event.target.value.trim() || "未命名场景";
@@ -357,6 +525,130 @@ function bindEvents() {
   };
 }
 
+function bindModeTabs() {
+  document.querySelectorAll("[data-mode]").forEach((button) => button.onclick = () => {
+    viewMode = button.dataset.mode;
+    selection = null;
+    if (viewMode === "cases" && !caseSetId) caseSetId = workspace.caseSets[0]?.id;
+    render();
+  });
+}
+
+function bindCaseSetEvents() {
+  bindModeTabs();
+  document.querySelector("#addCaseSet").onclick = addCaseSet;
+  document.querySelector("#emptyAddCaseSet")?.addEventListener("click", addCaseSet);
+  document.querySelector("#exportButton").onclick = exportJson;
+  document.querySelector("#importButton").onclick = () => document.querySelector("#fileInput").click();
+  document.querySelector("#fileInput").onchange = importJson;
+  const caseSet = currentCaseSet();
+  if (!caseSet) return;
+  document.querySelector("#caseSetSelect").onchange = (event) => {
+    caseSetId = event.target.value;
+    selectedCaseId = currentCaseSet()?.cases?.[0]?.id || null;
+    caseResults = [];
+    selectedCaseResultId = null;
+    caseRunState = "idle";
+    render();
+  };
+  document.querySelector("#caseSetName").onchange = (event) => {
+    caseSet.name = event.target.value.trim() || "未命名用例集";
+    save(); render();
+  };
+  document.querySelector("#caseActorTemplate").onchange = (event) => {
+    caseSet.actorTemplateId = event.target.value;
+    save(); render();
+  };
+  document.querySelector("#caseActionTemplate").onchange = (event) => {
+    caseSet.actionTemplateId = event.target.value;
+    save(); render();
+  };
+  document.querySelector("#addCase").onclick = addCase;
+  document.querySelector("#addCaseMain").onclick = addCase;
+  document.querySelector("#runCaseSetButton").onclick = runCaseSet;
+  document.querySelectorAll("[data-case-id], [data-case-row]").forEach((element) => element.onclick = () => {
+    selectedCaseId = element.dataset.caseId || element.dataset.caseRow;
+    render();
+  });
+  document.querySelectorAll("[data-result-id], [data-case-result]").forEach((element) => element.onclick = (event) => {
+    event.stopPropagation();
+    selectedCaseResultId = element.dataset.resultId || element.dataset.caseResult;
+    render();
+  });
+  const testCase = caseSet.cases.find((item) => item.id === selectedCaseId);
+  if (!testCase) return;
+  document.querySelector("#caseEnabled").onchange = (event) => {
+    testCase.enabled = event.target.checked;
+    save(); render();
+  };
+  document.querySelector("#caseName").onchange = (event) => {
+    testCase.name = event.target.value.trim() || "未命名用例";
+    save(); render();
+  };
+  document.querySelector("#caseOverrides").onchange = (event) => updateCaseJson(event.target, testCase, "overrides", "参数覆盖");
+  document.querySelector("#caseAssertions").onchange = (event) => updateCaseJson(event.target, testCase, "assertions", "断言");
+  document.querySelector("#duplicateCase").onclick = () => duplicateCase(testCase);
+  document.querySelector("#deleteCase").onclick = () => deleteCase(testCase.id);
+}
+
+function addCaseSet() {
+  const name = window.prompt("用例集名称", `新用例集 ${workspace.caseSets.length + 1}`)?.trim();
+  if (!name) return;
+  const id = uid("case-set");
+  workspace.caseSets.push({
+    id,
+    name,
+    actorTemplateId: "",
+    actionTemplateId: workspace.templates.actions[0]?.id || "",
+    cases: []
+  });
+  caseSetId = id;
+  selectedCaseId = null;
+  save(); render();
+}
+
+function addCase() {
+  const caseSet = currentCaseSet();
+  const testCase = {
+    id: uid("case"),
+    name: `用例 ${caseSet.cases.length + 1}`,
+    enabled: true,
+    overrides: {},
+    assertions: [{ source: "status", operator: "equals", expected: 200 }]
+  };
+  caseSet.cases.push(testCase);
+  selectedCaseId = testCase.id;
+  save(); render();
+}
+
+function duplicateCase(testCase) {
+  const copy = clone(testCase);
+  copy.id = uid("case");
+  copy.name = `${testCase.name} - 副本`;
+  currentCaseSet().cases.push(copy);
+  selectedCaseId = copy.id;
+  save(); render();
+}
+
+function deleteCase(id) {
+  const caseSet = currentCaseSet();
+  caseSet.cases = caseSet.cases.filter((item) => item.id !== id);
+  selectedCaseId = caseSet.cases[0]?.id || null;
+  save(); render();
+}
+
+function updateCaseJson(field, owner, key, label) {
+  try {
+    const value = JSON.parse(field.value);
+    if (key === "assertions" && !Array.isArray(value)) throw new Error("断言必须是数组");
+    if (key === "overrides" && (!value || typeof value !== "object" || Array.isArray(value))) throw new Error("参数覆盖必须是对象");
+    owner[key] = value;
+    save(); render();
+  } catch (error) {
+    alert(`${label} JSON 无效：${error.message}`);
+  }
+}
+
 function bindInspectorEvents() {
   document.querySelectorAll("[data-json]").forEach((field) => field.onchange = () => updateJson(field, workspace, field.dataset.json));
   if (selection?.kind === "edge") {
@@ -384,6 +676,11 @@ function bindInspectorEvents() {
       document.querySelectorAll("[data-auth-field]").forEach((field) => field.onchange = () => {
         auth[field.dataset.authField] = field.value; save(); render();
       });
+      document.querySelectorAll("[data-auth-request-field]").forEach((field) => field.onchange = () => {
+        auth.request[field.dataset.authRequestField] = field.value; save(); render();
+      });
+      document.querySelectorAll("[data-auth-request-json]").forEach((field) => field.onchange = () =>
+        updateJson(field, auth.request, field.dataset.authRequestJson));
     }
     document.querySelector("#saveTemplate")?.addEventListener("click", () => saveNodeTemplate(node));
     document.querySelector("#deleteNode")?.addEventListener("click", () => deleteNode(node.id));
@@ -408,7 +705,7 @@ function dropNode(event) {
   const rect = document.querySelector(".canvas-inner").getBoundingClientRect();
   const id = uid(payload.type);
   const savedTemplate = payload.templateId ? template(payload.type, payload.templateId) : null;
-  const data = payload.type === "actor" ? { actor: savedTemplate ? clone(savedTemplate.config) : { name: "新 Actor", variables: { username: "", password: "" }, login: { method: "POST", url: "{{env.baseUrl}}/login", headers: {}, body: {} }, auth: { enabled: false, tokenPath: "body.token", headerName: "Authorization", prefix: "Bearer " } } }
+  const data = payload.type === "actor" ? { actor: savedTemplate ? clone(savedTemplate.config) : { name: "新 Actor", variables: { username: "", password: "" }, login: { method: "POST", url: "{{env.baseUrl}}/login", headers: {}, body: {} }, auth: { enabled: false, request: { method: "GET", url: "", headers: {} }, tokenPath: "body.token", headerName: "Authorization", prefix: "Bearer " } } }
     : payload.type === "action" ? { action: savedTemplate ? clone(savedTemplate.config) : { name: "新 Action", request: { method: "GET", url: "{{env.baseUrl}}/", headers: {}, body: {} } } }
     : payload.type === "scenario" ? { scenarioId: workspace.scenarios.find((item) => item.id !== scenarioId)?.id || "" }
     : { label: "响应状态正确", actual: "{{steps.action-id.status}}", operator: "equals", expected: 200 };
@@ -493,6 +790,41 @@ async function runScenario() {
   if (revision === runRevision) activeRunController = null;
   render();
 }
+async function runCaseSet() {
+  const caseSet = currentCaseSet();
+  if (!caseSet.actionTemplateId) return alert("请先选择一个 Action 模板");
+  if (!caseSet.cases.some((item) => item.enabled !== false)) return alert("请至少启用一条用例");
+  activeRunController?.abort();
+  const controller = new AbortController();
+  activeRunController = controller;
+  const revision = ++runRevision;
+  const workspaceSnapshot = clone(workspace);
+  caseRunState = "running";
+  caseResults = [];
+  selectedCaseResultId = null;
+  render();
+  try {
+    const response = await fetch("/api/execute-case-set", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ workspace: workspaceSnapshot, caseSetId }),
+      signal: controller.signal
+    });
+    const result = await response.json();
+    if (revision !== runRevision) return;
+    if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
+    caseResults = result.cases || [];
+    caseRunState = result.ok ? "success" : "failure";
+    selectedCaseResultId = caseResults.find((item) => !item.ok)?.id || caseResults[0]?.id || null;
+  } catch (error) {
+    if (revision !== runRevision || error.name === "AbortError") return;
+    caseResults = [{ id: "run-error", name: "无法执行用例集", ok: false, error: error.message }];
+    caseRunState = "failure";
+    selectedCaseResultId = "run-error";
+  }
+  if (revision === runRevision) activeRunController = null;
+  render();
+}
 function exportJson() {
   const blob = new Blob([JSON.stringify(workspace, null, 2)], { type: "application/json" });
   const link = document.createElement("a");
@@ -505,8 +837,13 @@ async function importJson(event) {
   if (!file) return;
   try {
     const imported = JSON.parse(await file.text());
-    if (!Array.isArray(imported.actors) || !Array.isArray(imported.actions) || !Array.isArray(imported.scenarios)) throw new Error("缺少 actors、actions 或 scenarios 数组");
-    workspace = normalizeWorkspace(imported); scenarioId = workspace.scenarios[0]?.id; selection = null; save(); render();
+    if (!Array.isArray(imported.scenarios)) throw new Error("缺少 scenarios 数组");
+    workspace = normalizeWorkspace(imported);
+    scenarioId = workspace.scenarios[0]?.id;
+    caseSetId = workspace.caseSets[0]?.id;
+    selectedCaseId = null;
+    selection = null;
+    save(); render();
   } catch (error) { alert(`导入失败：${error.message}`); }
 }
 

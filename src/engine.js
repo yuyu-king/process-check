@@ -16,6 +16,7 @@ export function validateWorkspace(workspace) {
   if (!Array.isArray(workspace?.scenarios)) errors.push("scenarios 必须是数组");
   if (workspace?.actors !== undefined && !Array.isArray(workspace.actors)) errors.push("actors 必须是数组");
   if (workspace?.actions !== undefined && !Array.isArray(workspace.actions)) errors.push("actions 必须是数组");
+  if (workspace?.caseSets !== undefined && !Array.isArray(workspace.caseSets)) errors.push("caseSets 必须是数组");
   const unique = (items, label) => {
     const seen = new Set();
     for (const item of items || []) {
@@ -27,6 +28,7 @@ export function validateWorkspace(workspace) {
   unique(workspace?.actors || [], "actors");
   unique(workspace?.actions || [], "actions");
   unique(workspace?.scenarios, "scenarios");
+  unique(workspace?.caseSets || [], "caseSets");
   for (const scenario of workspace?.scenarios || []) {
     unique(scenario.nodes, `scenario:${scenario.id}.nodes`);
     const nodeIds = new Set((scenario.nodes || []).map((node) => node.id));
@@ -37,6 +39,18 @@ export function validateWorkspace(workspace) {
     }
   }
   return errors;
+}
+
+function mergeObjects(base, override) {
+  if (Array.isArray(override)) return structuredClone(override);
+  if (!override || typeof override !== "object") return override;
+  const result = base && typeof base === "object" && !Array.isArray(base) ? structuredClone(base) : {};
+  for (const [key, value] of Object.entries(override)) {
+    result[key] = value && typeof value === "object" && !Array.isArray(value)
+      ? mergeObjects(result[key], value)
+      : structuredClone(value);
+  }
+  return result;
 }
 
 function pathTokens(path) {
@@ -164,12 +178,14 @@ function assertionPass(operator, actual, expected) {
   }
 }
 
-function buildActorHeaders(actor, loginResult) {
+function buildActorHeaders(actor, authResult, loginResult) {
   const auth = actor?.auth;
   if (!auth?.enabled) return {};
-  const token = readPath(loginResult, auth.tokenPath || "body.token");
+  const tokenSource = auth.request?.url ? authResult : loginResult;
+  const token = readPath(tokenSource, auth.tokenPath || "body.token");
   if (token === undefined || token === null || token === "") {
-    throw new FlowError(`Actor ${actor.name} 无法从登录响应提取 Token: ${auth.tokenPath || "body.token"}`);
+    const sourceLabel = auth.request?.url ? "Token 接口响应" : "登录响应";
+    throw new FlowError(`Actor ${actor.name} 无法从${sourceLabel}提取 Token: ${auth.tokenPath || "body.token"}`);
   }
   return {
     [auth.headerName || "Authorization"]: `${auth.prefix || ""}${token}`
@@ -211,15 +227,31 @@ export async function executeWorkspace(workspace, scenarioId, options = {}) {
 
   async function ensureActor(sessionKey, actor) {
     if (!actor) throw new FlowError(`Actor 配置不存在: ${sessionKey}`);
-    if (!sessions.has(sessionKey)) sessions.set(sessionKey, { jar: new Map(), loggedIn: false });
+    if (!sessions.has(sessionKey)) sessions.set(sessionKey, { jar: new Map(), loggedIn: false, ready: false });
     const session = sessions.get(sessionKey);
-    if (session.loggedIn || !actor.login?.url) return session;
-    log({ type: "actor:start", actorId: sessionKey, label: actor.name });
-    const result = await httpRequest(actor.login, { ...context, actor: actor.variables || {} }, session.jar, fetchImpl);
-    context.actors[sessionKey] = { login: result };
-    if (!result.ok) throw new FlowError(`Actor ${actor.name} 登录失败: HTTP ${result.status}`, { result });
-    session.loggedIn = true;
-    log({ type: "actor:success", actorId: sessionKey, label: actor.name, result });
+    if (session.ready) return session;
+    context.actors[sessionKey] ||= {};
+    if (!session.loggedIn && actor.login?.url) {
+      log({ type: "actor:start", actorId: sessionKey, label: actor.name });
+      const result = await httpRequest(actor.login, { ...context, actor: actor.variables || {} }, session.jar, fetchImpl);
+      context.actors[sessionKey].login = result;
+      if (!result.ok) throw new FlowError(`Actor ${actor.name} 登录失败: HTTP ${result.status}`, { result });
+      session.loggedIn = true;
+      log({ type: "actor:success", actorId: sessionKey, label: actor.name, result });
+    }
+    if (actor.auth?.enabled && actor.auth.request?.url) {
+      log({ type: "actor:auth:start", actorId: sessionKey, label: `${actor.name} 获取 Token` });
+      const result = await httpRequest(
+        actor.auth.request,
+        { ...context, actor: actor.variables || {}, login: context.actors[sessionKey].login },
+        session.jar,
+        fetchImpl
+      );
+      context.actors[sessionKey].auth = result;
+      if (!result.ok) throw new FlowError(`Actor ${actor.name} 获取 Token 失败: HTTP ${result.status}`, { result });
+      log({ type: "actor:auth:success", actorId: sessionKey, label: `${actor.name} 获取 Token`, result });
+    }
+    session.ready = true;
     return session;
   }
 
@@ -251,7 +283,7 @@ export async function executeWorkspace(workspace, scenarioId, options = {}) {
             ...action.request,
             ...requestOverride,
             headers: mergeHeaders(
-              buildActorHeaders(actor, context.actors[sessionKey]?.login),
+              buildActorHeaders(actor, context.actors[sessionKey]?.auth, context.actors[sessionKey]?.login),
               action.request?.headers,
               requestOverride.headers
             )
@@ -288,4 +320,87 @@ export async function executeWorkspace(workspace, scenarioId, options = {}) {
   } catch (error) {
     return { ok: false, error: error.message, details: error.details, context, events };
   }
+}
+
+export async function executeCaseSet(workspace, caseSetId, options = {}) {
+  const errors = validateWorkspace(workspace);
+  if (errors.length) throw new FlowError("工作区 JSON 无效", { errors });
+  const caseSet = (workspace.caseSets || []).find((item) => item.id === caseSetId);
+  if (!caseSet) throw new FlowError(`接口用例集不存在: ${caseSetId}`);
+
+  const actorTemplate = (workspace.templates?.actors || []).find((item) => item.id === caseSet.actorTemplateId);
+  const actionTemplate = (workspace.templates?.actions || []).find((item) => item.id === caseSet.actionTemplateId);
+  if (!actionTemplate?.config) throw new FlowError(`接口用例集未选择有效的 Action 模板: ${caseSet.name || caseSet.id}`);
+
+  const enabledCases = (caseSet.cases || []).filter((item) => item.enabled !== false);
+  const results = [];
+  for (const testCase of enabledCases) {
+    const actor = actorTemplate?.config || {
+      name: "匿名 Actor",
+      variables: {},
+      login: { method: "GET", url: "", headers: {} },
+      auth: { enabled: false }
+    };
+    const action = structuredClone(actionTemplate.config);
+    action.request = mergeObjects(action.request || {}, testCase.overrides || {});
+    const assertions = testCase.assertions?.length
+      ? testCase.assertions
+      : [{ source: "ok", operator: "equals", expected: true }];
+    const nodes = [
+      { id: "case-actor", type: "actor", data: { actor: structuredClone(actor) } },
+      {
+        id: "request",
+        type: "action",
+        data: { action, continueOnFailure: true }
+      },
+      ...assertions.map((assertion, index) => ({
+        id: `assert-${index + 1}`,
+        type: "assert",
+        data: {
+          label: assertion.label || `${assertion.source || "ok"} ${assertion.operator || "equals"}`,
+          actual: `{{steps.request.${assertion.source || "ok"}}}`,
+          operator: assertion.operator || "equals",
+          expected: assertion.expected
+        }
+      }))
+    ];
+    const edges = nodes.slice(0, -1).map((node, index) => ({
+      source: node.id,
+      target: nodes[index + 1].id
+    }));
+    const syntheticScenarioId = `case-run-${testCase.id}`;
+    const executionWorkspace = {
+      ...structuredClone(workspace),
+      scenarios: [{
+        id: syntheticScenarioId,
+        name: `${caseSet.name} / ${testCase.name}`,
+        nodes,
+        edges
+      }]
+    };
+    const execution = await executeWorkspace(executionWorkspace, syntheticScenarioId, options);
+    results.push({
+      id: testCase.id,
+      name: testCase.name,
+      ok: execution.ok,
+      error: execution.error,
+      details: execution.details,
+      response: execution.context?.steps?.request,
+      assertions: Object.values(execution.context?.steps || {}).filter((item) =>
+        item && typeof item === "object" && "passed" in item),
+      events: execution.events
+    });
+  }
+
+  const passed = results.filter((item) => item.ok).length;
+  return {
+    ok: results.length > 0 && passed === results.length,
+    summary: {
+      total: results.length,
+      passed,
+      failed: results.length - passed,
+      skipped: (caseSet.cases || []).length - results.length
+    },
+    cases: results
+  };
 }

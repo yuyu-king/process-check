@@ -29,6 +29,9 @@ const { chromium } = require("playwright");
 
     await page.locator("[data-auth-enabled]").setChecked(true);
     assert.equal(await page.locator('[data-auth-field="tokenPath"]').count(), 1, "Actor 应支持配置 Token 提取路径");
+    assert.equal(await page.locator('[data-auth-request-field="url"]').count(), 1, "Actor 应支持配置独立 Token 接口");
+    await page.locator('[data-auth-request-field="url"]').fill("{{env.baseUrl}}/token");
+    await page.locator('[data-auth-request-field="url"]').press("Tab");
     await page.locator('[data-auth-field="tokenPath"]').fill("body.data.accessToken");
     await page.locator('[data-auth-field="tokenPath"]').press("Tab");
 
