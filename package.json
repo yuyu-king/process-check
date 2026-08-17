@@ -6,7 +6,9 @@
   "type": "module",
   "scripts": {
     "start": "node src/server.js",
-    "check": "node --check src/server.js && node --check src/engine.js && node --check public/app.js",
+    "check": "node --check src/server.js && node --check src/engine.js",
+    "web:dev": "npm --prefix web run dev",
+    "web:build": "npm --prefix web run build",
     "demo:api": "node examples/demo-api.js",
     "verify": "node examples/verify-flow.js"
   },

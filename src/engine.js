@@ -15,6 +15,7 @@ export function validateWorkspace(workspace) {
   if (!workspace || typeof workspace !== "object") errors.push("根对象必须是 JSON object");
   if (!Array.isArray(workspace?.scenarios)) errors.push("scenarios 必须是数组");
   if (workspace?.actors !== undefined && !Array.isArray(workspace.actors)) errors.push("actors 必须是数组");
+  if (workspace?.apis !== undefined && !Array.isArray(workspace.apis)) errors.push("apis 必须是数组");
   if (workspace?.actions !== undefined && !Array.isArray(workspace.actions)) errors.push("actions 必须是数组");
   if (workspace?.caseSets !== undefined && !Array.isArray(workspace.caseSets)) errors.push("caseSets 必须是数组");
   const unique = (items, label) => {
@@ -26,6 +27,7 @@ export function validateWorkspace(workspace) {
     }
   };
   unique(workspace?.actors || [], "actors");
+  unique(workspace?.apis || [], "apis");
   unique(workspace?.actions || [], "actions");
   unique(workspace?.scenarios, "scenarios");
   unique(workspace?.caseSets || [], "caseSets");
@@ -207,10 +209,27 @@ function mergeHeaders(...sources) {
   return result;
 }
 
+function resolveAction(node, apis, actions) {
+  if (node.data?.action) return node.data.action;
+  if (node.data?.apiId && apis.has(node.data.apiId)) {
+    const api = apis.get(node.data.apiId);
+    return { name: api.name, request: api.request };
+  }
+  if (node.data?.actionId && actions.has(node.data.actionId)) return actions.get(node.data.actionId);
+  return null;
+}
+
+function resolveActor(node, actors) {
+  if (node.data?.actor) return node.data.actor;
+  if (node.data?.actorId) return actors.get(node.data.actorId) || null;
+  return null;
+}
+
 export async function executeWorkspace(workspace, scenarioId, options = {}) {
   const errors = validateWorkspace(workspace);
   if (errors.length) throw new FlowError("工作区 JSON 无效", { errors });
   const actors = new Map((workspace.actors || []).map((item) => [item.id, item]));
+  const apis = new Map((workspace.apis || []).map((item) => [item.id, item]));
   const actions = new Map((workspace.actions || []).map((item) => [item.id, item]));
   const scenarios = new Map(workspace.scenarios.map((item) => [item.id, item]));
   const fetchImpl = options.fetchImpl || fetch;
@@ -224,12 +243,17 @@ export async function executeWorkspace(workspace, scenarioId, options = {}) {
   const events = [];
   let sequence = 0;
   const log = (event) => events.push({ sequence: ++sequence, timestamp: new Date().toISOString(), ...event });
+  const dynamicDefaultHeaders = {};
+  const ANON_KEY = "__anonymous__";
 
   async function ensureActor(sessionKey, actor) {
-    if (!actor) throw new FlowError(`Actor 配置不存在: ${sessionKey}`);
     if (!sessions.has(sessionKey)) sessions.set(sessionKey, { jar: new Map(), loggedIn: false, ready: false });
     const session = sessions.get(sessionKey);
     if (session.ready) return session;
+    if (!actor) {
+      session.ready = true;
+      return session;
+    }
     context.actors[sessionKey] ||= {};
     if (!session.loggedIn && actor.login?.url) {
       log({ type: "actor:start", actorId: sessionKey, label: actor.name });
@@ -250,6 +274,11 @@ export async function executeWorkspace(workspace, scenarioId, options = {}) {
       context.actors[sessionKey].auth = result;
       if (!result.ok) throw new FlowError(`Actor ${actor.name} 获取 Token 失败: HTTP ${result.status}`, { result });
       log({ type: "actor:auth:success", actorId: sessionKey, label: `${actor.name} 获取 Token`, result });
+    } else if (actor.auth?.enabled && !actor.auth.request?.url) {
+      // Token 从登录响应提取：确保已登录
+      if (!session.loggedIn && actor.login?.url) {
+        /* already handled above */
+      }
     }
     session.ready = true;
     return session;
@@ -265,25 +294,40 @@ export async function executeWorkspace(workspace, scenarioId, options = {}) {
     for (const node of topologicalNodes(scenario)) {
       try {
         if (node.type === "actor") {
-          const actor = node.data?.actor || actors.get(node.data?.actorId);
-          const sessionKey = node.data?.actor ? node.id : node.data?.actorId;
+          const actor = resolveActor(node, actors);
+          if (!actor) throw new FlowError(`角色不存在: ${node.data?.actorId || node.id}`);
+          const sessionKey = node.id;
           currentActor = { sessionKey, actor };
           actorNodes.set(node.id, currentActor);
           await ensureActor(sessionKey, actor);
         } else if (node.type === "action") {
-          const action = node.data?.action || actions.get(node.data?.actionId);
-          if (!action) throw new FlowError(`Action 配置不存在: ${node.id}`);
-          const selectedActor = node.data?.actorNodeId ? actorNodes.get(node.data.actorNodeId) : currentActor;
-          if (!selectedActor) throw new FlowError(`Action ${action.name} 没有可用 Actor`);
-          const { sessionKey, actor } = selectedActor;
-          const session = await ensureActor(sessionKey, actor);
+          const action = resolveAction(node, apis, actions);
+          if (!action) throw new FlowError(`API 不存在: ${node.data?.apiId || node.id}`);
+          const selectedActor = node.data?.actorNodeId
+            ? actorNodes.get(node.data.actorNodeId)
+            : currentActor;
+          let sessionKey;
+          let actor;
+          if (selectedActor) {
+            ({ sessionKey, actor } = selectedActor);
+            await ensureActor(sessionKey, actor);
+          } else {
+            sessionKey = ANON_KEY;
+            actor = null;
+            await ensureActor(sessionKey, null);
+          }
+          const session = sessions.get(sessionKey);
           log({ type: "action:start", nodeId: node.id, actorId: sessionKey, label: action.name });
           const requestOverride = node.data?.requestOverride || {};
+          const mergedRequest = mergeObjects(action.request || {}, requestOverride);
           const requestConfig = {
-            ...action.request,
-            ...requestOverride,
+            ...mergedRequest,
             headers: mergeHeaders(
-              buildActorHeaders(actor, context.actors[sessionKey]?.auth, context.actors[sessionKey]?.login),
+              scenario.defaultHeaders || {},
+              dynamicDefaultHeaders,
+              actor
+                ? buildActorHeaders(actor, context.actors[sessionKey]?.auth, context.actors[sessionKey]?.login)
+                : {},
               action.request?.headers,
               requestOverride.headers
             )
@@ -291,6 +335,10 @@ export async function executeWorkspace(workspace, scenarioId, options = {}) {
           const result = await httpRequest(requestConfig, context, session.jar, fetchImpl);
           context.steps[node.id] = result;
           if (node.data?.saveAs) context.shared[node.data.saveAs] = result.body;
+          if (node.data?.setDefaultHeaders && typeof node.data.setDefaultHeaders === "object") {
+            const injected = renderTemplate(node.data.setDefaultHeaders, context);
+            Object.assign(dynamicDefaultHeaders, injected);
+          }
           log({ type: result.ok ? "action:success" : "action:failure", nodeId: node.id, actorId: sessionKey, label: action.name, result });
           if (!result.ok && node.data?.continueOnFailure !== true) {
             throw new FlowError(`Action ${action.name} 失败: HTTP ${result.status}`, { result });
@@ -328,33 +376,53 @@ export async function executeCaseSet(workspace, caseSetId, options = {}) {
   const caseSet = (workspace.caseSets || []).find((item) => item.id === caseSetId);
   if (!caseSet) throw new FlowError(`接口用例集不存在: ${caseSetId}`);
 
-  const actorTemplate = (workspace.templates?.actors || []).find((item) => item.id === caseSet.actorTemplateId);
-  const actionTemplate = (workspace.templates?.actions || []).find((item) => item.id === caseSet.actionTemplateId);
-  if (!actionTemplate?.config) throw new FlowError(`接口用例集未选择有效的 Action 模板: ${caseSet.name || caseSet.id}`);
+  // v5: apiId / actorId；兼容旧 templates
+  const apiId = caseSet.apiId || caseSet.actionTemplateId;
+  const actorId = caseSet.actorId || caseSet.actorTemplateId || "";
+  let api = (workspace.apis || []).find((item) => item.id === apiId);
+  if (!api) {
+    const actionTemplate = (workspace.templates?.actions || []).find((item) => item.id === apiId);
+    if (actionTemplate?.config) {
+      api = { id: apiId, name: actionTemplate.config.name, request: actionTemplate.config.request };
+    }
+  }
+  if (!api?.request) throw new FlowError(`接口用例集未选择有效的 API: ${caseSet.name || caseSet.id}`);
+
+  let actor = actorId ? (workspace.actors || []).find((item) => item.id === actorId) : null;
+  if (!actor && actorId) {
+    const actorTemplate = (workspace.templates?.actors || []).find((item) => item.id === actorId);
+    if (actorTemplate?.config) actor = { id: actorId, ...actorTemplate.config };
+  }
 
   const enabledCases = (caseSet.cases || []).filter((item) => item.enabled !== false);
   const results = [];
   for (const testCase of enabledCases) {
-    const actor = actorTemplate?.config || {
-      name: "匿名 Actor",
-      variables: {},
-      login: { method: "GET", url: "", headers: {} },
-      auth: { enabled: false }
-    };
-    const action = structuredClone(actionTemplate.config);
-    action.request = mergeObjects(action.request || {}, testCase.overrides || {});
     const assertions = testCase.assertions?.length
       ? testCase.assertions
-      : [{ source: "ok", operator: "equals", expected: true }];
-    const nodes = [
-      { id: "case-actor", type: "actor", data: { actor: structuredClone(actor) } },
-      {
-        id: "request",
-        type: "action",
-        data: { action, continueOnFailure: true }
-      },
-      ...assertions.map((assertion, index) => ({
-        id: `assert-${index + 1}`,
+      : (api.defaultAssertions?.length
+        ? api.defaultAssertions
+        : [{ source: "ok", operator: "equals", expected: true }]);
+    const nodes = [];
+    const edges = [];
+    if (actor) {
+      nodes.push({ id: "case-actor", type: "actor", data: { actorId: actor.id } });
+    }
+    nodes.push({
+      id: "request",
+      type: "action",
+      data: {
+        apiId: api.id,
+        requestOverride: testCase.overrides || {},
+        continueOnFailure: true,
+        ...(actor ? { actorNodeId: "case-actor" } : {})
+      }
+    });
+    if (actor) edges.push({ source: "case-actor", target: "request" });
+    for (let index = 0; index < assertions.length; index += 1) {
+      const assertion = assertions[index];
+      const assertId = `assert-${index + 1}`;
+      nodes.push({
+        id: assertId,
         type: "assert",
         data: {
           label: assertion.label || `${assertion.source || "ok"} ${assertion.operator || "equals"}`,
@@ -362,18 +430,23 @@ export async function executeCaseSet(workspace, caseSetId, options = {}) {
           operator: assertion.operator || "equals",
           expected: assertion.expected
         }
-      }))
-    ];
-    const edges = nodes.slice(0, -1).map((node, index) => ({
-      source: node.id,
-      target: nodes[index + 1].id
-    }));
+      });
+      edges.push({
+        source: index === 0 ? "request" : `assert-${index}`,
+        target: assertId
+      });
+    }
     const syntheticScenarioId = `case-run-${testCase.id}`;
     const executionWorkspace = {
       ...structuredClone(workspace),
+      actors: actor
+        ? [...(workspace.actors || []).filter((a) => a.id !== actor.id), structuredClone(actor)]
+        : (workspace.actors || []),
+      apis: [...(workspace.apis || []).filter((a) => a.id !== api.id), structuredClone(api)],
       scenarios: [{
         id: syntheticScenarioId,
         name: `${caseSet.name} / ${testCase.name}`,
+        defaultHeaders: {},
         nodes,
         edges
       }]

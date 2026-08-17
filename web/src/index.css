@@ -1,0 +1,100 @@
+@import "tailwindcss";
+@import "@xyflow/react/dist/style.css";
+
+@theme {
+  --color-canvas: #f6f7f9;
+  --color-panel: #ffffff;
+  --color-ink: #18181b;
+  --color-ink-soft: #52525b;
+  --color-ink-faint: #a1a1aa;
+  --color-line: #e7e7ea;
+  --color-line-soft: #f1f1f3;
+  --color-brand: #2563eb;
+  --color-brand-soft: #eff4ff;
+  --color-actor: #7c3aed;
+  --color-action: #2563eb;
+  --color-assert: #059669;
+  --color-scenario: #ea580c;
+  --color-ok: #16a34a;
+  --color-fail: #dc2626;
+  --font-sans: "Inter", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "SFMono-Regular", ui-monospace, monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: var(--font-sans);
+  color: var(--color-ink);
+  background: var(--color-canvas);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Scrollbars */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: #d4d4d8;
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #a1a1aa;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* React Flow tuning */
+.react-flow__attribution {
+  display: none;
+}
+.react-flow__edge-path {
+  stroke: #c4c8d0;
+  stroke-width: 2;
+}
+.react-flow__edge.selected .react-flow__edge-path,
+.react-flow__edge:hover .react-flow__edge-path {
+  stroke: var(--color-brand);
+  stroke-width: 2.5;
+}
+.react-flow__edge.animated .react-flow__edge-path {
+  stroke: var(--color-brand);
+}
+.react-flow__handle {
+  width: 11px;
+  height: 11px;
+  background: #fff;
+  border: 2px solid #b4b8c0;
+}
+.react-flow__handle:hover {
+  border-color: var(--color-brand);
+}
+.react-flow__handle-connecting {
+  border-color: var(--color-brand);
+}
+.react-flow__node {
+  cursor: grab;
+}
+.react-flow__node.dragging {
+  cursor: grabbing;
+}
+
+/* Utility text */
+.mono {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}

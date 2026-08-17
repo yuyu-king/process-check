@@ -4,32 +4,26 @@ import { executeCaseSet } from "../src/engine.js";
 
 function workspaceWithCases(cases) {
   return {
-    version: 3,
+    version: 5,
     activeEnvironment: "local",
     environments: { local: { baseUrl: "http://example.test" } },
     variables: {},
-    templates: {
-      actors: [],
-      actions: [{
-        id: "create-project",
-        name: "Create project",
-        config: {
-          name: "Create project",
-          request: {
-            method: "POST",
-            url: "{{env.baseUrl}}/projects",
-            headers: { "x-suite": "condition-validation" },
-            body: { name: "base-name", options: { audited: true, level: 1 } }
-          }
-        }
-      }]
-    },
+    actors: [],
+    apis: [{
+      id: "create-project",
+      name: "Create project",
+      request: {
+        method: "POST",
+        url: "{{env.baseUrl}}/projects",
+        headers: { "x-suite": "condition-validation" },
+        body: { name: "base-name", options: { audited: true, level: 1 } }
+      }
+    }],
     scenarios: [],
     caseSets: [{
       id: "project-conditions",
       name: "Project conditions",
-      actorTemplateId: "",
-      actionTemplateId: "create-project",
+      apiId: "create-project",
       cases
     }]
   };
@@ -128,27 +122,24 @@ test("case set reuses Actor login and automatic token injection", async () => {
     overrides: {},
     assertions: [{ source: "status", operator: "equals", expected: 200 }]
   }]);
-  workspace.templates.actors.push({
+  workspace.actors.push({
     id: "supervisor",
     name: "Supervisor",
-    config: {
-      name: "Supervisor",
-      variables: { username: "supervisor" },
-      login: {
-        method: "POST",
-        url: "{{env.baseUrl}}/token",
-        headers: {},
-        body: { username: "{{actor.username}}" }
-      },
-      auth: {
-        enabled: true,
-        tokenPath: "body.accessToken",
-        headerName: "Authorization",
-        prefix: "Bearer "
-      }
+    variables: { username: "supervisor" },
+    login: {
+      method: "POST",
+      url: "{{env.baseUrl}}/token",
+      headers: {},
+      body: { username: "{{actor.username}}" }
+    },
+    auth: {
+      enabled: true,
+      tokenPath: "body.accessToken",
+      headerName: "Authorization",
+      prefix: "Bearer "
     }
   });
-  workspace.caseSets[0].actorTemplateId = "supervisor";
+  workspace.caseSets[0].actorId = "supervisor";
   const calls = [];
   const fetchImpl = async (url, init) => {
     calls.push({ url, init });
@@ -166,7 +157,7 @@ test("case set reuses Actor login and automatic token injection", async () => {
 
   const result = await executeCaseSet(workspace, "project-conditions", { fetchImpl });
 
-  assert.equal(result.ok, true);
+  assert.equal(result.ok, true, result.error);
   assert.equal(calls.length, 2);
   assert.equal(calls[1].init.headers.Authorization, "Bearer case-token");
 });
