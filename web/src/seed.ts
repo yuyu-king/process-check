@@ -13,6 +13,30 @@ import type {
 export const uid = (prefix: string) => `${prefix}-${nanoid(6)}`;
 export const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value));
 
+export function normalizeAuth(auth?: Partial<Actor["auth"]> | null): Actor["auth"] {
+  const request = auth?.request || { method: "GET" as const, url: "", headers: {} };
+  let bindings = Array.isArray(auth?.bindings) ? [...auth.bindings] : [];
+  if (!bindings.length && (auth?.tokenPath || auth?.headerName)) {
+    bindings = [
+      {
+        path: auth.tokenPath || "body.token",
+        headerName: auth.headerName || "Authorization",
+        prefix: auth.prefix ?? "Bearer ",
+      },
+    ];
+  }
+  return {
+    enabled: Boolean(auth?.enabled),
+    request: {
+      method: request.method || "GET",
+      url: request.url || "",
+      headers: request.headers || {},
+      ...(request.body !== undefined ? { body: request.body } : {}),
+    },
+    bindings,
+  };
+}
+
 export function newActor(name = "新角色"): Actor {
   return {
     id: uid("actor"),
@@ -24,13 +48,8 @@ export function newActor(name = "新角色"): Actor {
       headers: {},
       body: { username: "{{actor.username}}", password: "{{actor.password}}" },
     },
-    auth: {
-      enabled: false,
-      request: { method: "GET", url: "", headers: {} },
-      tokenPath: "body.token",
-      headerName: "Authorization",
-      prefix: "Bearer ",
-    },
+    auth: normalizeAuth({ enabled: false }),
+    defaultHeaders: {},
   };
 }
 
@@ -100,13 +119,8 @@ export function normalizeWorkspace(value: unknown): Workspace {
       name: config.name,
       variables: config.variables || {},
       login: config.login,
-      auth: {
-        enabled: Boolean(config.auth?.enabled),
-        request: config.auth?.request || { method: "GET", url: "", headers: {} },
-        tokenPath: config.auth?.tokenPath || "body.token",
-        headerName: config.auth?.headerName || "Authorization",
-        prefix: config.auth?.prefix ?? "Bearer ",
-      },
+      auth: normalizeAuth(config.auth),
+      defaultHeaders: (config as Actor).defaultHeaders || {},
     });
     actorByKey.set(key, id);
     return id;
@@ -138,7 +152,12 @@ export function normalizeWorkspace(value: unknown): Workspace {
   }
 
   // index existing library ids
-  for (const a of actors) actorByKey.set(a.id, a.id);
+  for (const a of actors) {
+    a.auth = normalizeAuth(a.auth);
+    a.defaultHeaders ||= {};
+    a.variables ||= {};
+    actorByKey.set(a.id, a.id);
+  }
   for (const a of apis) apiByKey.set(a.id, a.id);
 
   const scenarios = (Array.isArray(raw.scenarios) ? raw.scenarios : []) as Scenario[];

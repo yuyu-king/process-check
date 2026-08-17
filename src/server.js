@@ -37,8 +37,8 @@ const server = http.createServer(async (request, response) => {
       return sendJson(response, 200, result);
     }
     if (request.method === "POST" && url.pathname === "/api/execute-case-set") {
-      const { workspace, caseSetId } = await bodyJson(request);
-      const result = await executeCaseSet(workspace, caseSetId);
+      const { workspace, caseSetId, caseIds } = await bodyJson(request);
+      const result = await executeCaseSet(workspace, caseSetId, { caseIds });
       return sendJson(response, 200, result);
     }
     if (request.method !== "GET") return sendJson(response, 405, { error: "Method not allowed" });

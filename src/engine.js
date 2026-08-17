@@ -180,18 +180,39 @@ function assertionPass(operator, actual, expected) {
   }
 }
 
-function buildActorHeaders(actor, authResult, loginResult) {
-  const auth = actor?.auth;
-  if (!auth?.enabled) return {};
-  const tokenSource = auth.request?.url ? authResult : loginResult;
-  const token = readPath(tokenSource, auth.tokenPath || "body.token");
-  if (token === undefined || token === null || token === "") {
-    const sourceLabel = auth.request?.url ? "Token 接口响应" : "登录响应";
-    throw new FlowError(`Actor ${actor.name} 无法从${sourceLabel}提取 Token: ${auth.tokenPath || "body.token"}`);
+function resolveAuthBindings(auth) {
+  if (Array.isArray(auth?.bindings) && auth.bindings.length) return auth.bindings;
+  if (auth?.tokenPath || auth?.headerName) {
+    return [{
+      path: auth.tokenPath || "body.token",
+      headerName: auth.headerName || "Authorization",
+      prefix: auth.prefix ?? "Bearer "
+    }];
   }
-  return {
-    [auth.headerName || "Authorization"]: `${auth.prefix || ""}${token}`
-  };
+  return [];
+}
+
+function buildActorHeaders(actor, authResult, loginResult, context) {
+  const staticHeaders = actor?.defaultHeaders
+    ? renderTemplate(actor.defaultHeaders, { ...context, actor: actor.variables || {} })
+    : {};
+  const auth = actor?.auth;
+  if (!auth?.enabled) return staticHeaders || {};
+
+  const hasTokenRequest = Boolean(auth.request?.url);
+  const tokenSource = hasTokenRequest ? authResult : loginResult;
+  const sourceLabel = hasTokenRequest ? "引导请求（Token）响应" : "登录响应";
+  const bindings = resolveAuthBindings(auth);
+  const injected = {};
+  for (const binding of bindings) {
+    const path = binding.path || "body.token";
+    const token = readPath(tokenSource, path);
+    if (token === undefined || token === null || token === "") {
+      throw new FlowError(`Actor ${actor.name} 无法从${sourceLabel}提取: ${path}`);
+    }
+    injected[binding.headerName || "Authorization"] = `${binding.prefix || ""}${token}`;
+  }
+  return mergeHeaders(staticHeaders, injected);
 }
 
 function mergeHeaders(...sources) {
@@ -326,7 +347,12 @@ export async function executeWorkspace(workspace, scenarioId, options = {}) {
               scenario.defaultHeaders || {},
               dynamicDefaultHeaders,
               actor
-                ? buildActorHeaders(actor, context.actors[sessionKey]?.auth, context.actors[sessionKey]?.login)
+                ? buildActorHeaders(
+                  actor,
+                  context.actors[sessionKey]?.auth,
+                  context.actors[sessionKey]?.login,
+                  context
+                )
                 : {},
               action.request?.headers,
               requestOverride.headers
@@ -370,6 +396,99 @@ export async function executeWorkspace(workspace, scenarioId, options = {}) {
   }
 }
 
+function buildCaseLayers(execution) {
+  const events = execution.events || [];
+  const steps = execution.context?.steps || {};
+  const httpFrom = (result) => {
+    if (!result || typeof result !== "object") return null;
+    return {
+      request: result.request,
+      status: result.status,
+      ok: result.ok,
+      headers: result.headers,
+      body: result.body,
+      durationMs: result.durationMs
+    };
+  };
+
+  let login = null;
+  let auth = null;
+  for (const event of events) {
+    if (event.type === "actor:success" || event.type === "actor:start") {
+      if (event.result || event.type === "actor:success") {
+        login = {
+          label: event.label || "登录",
+          ok: event.type === "actor:success",
+          ...httpFrom(event.result)
+        };
+      }
+    }
+    if (event.type === "actor:failure" || (event.type === "node:error" && event.nodeId === "case-actor" && !login)) {
+      login = {
+        label: event.label || "登录",
+        ok: false,
+        error: event.error,
+        ...(httpFrom(event.result) || httpFrom(event.details?.result) || {})
+      };
+    }
+    if (event.type === "actor:auth:success" || event.type === "actor:auth:start") {
+      if (event.result || event.type === "actor:auth:success") {
+        auth = {
+          label: event.label || "获取 Token",
+          ok: event.type === "actor:auth:success",
+          ...httpFrom(event.result)
+        };
+      }
+    }
+    if (event.type === "actor:auth:failure") {
+      auth = {
+        label: event.label || "获取 Token",
+        ok: false,
+        error: event.error,
+        ...httpFrom(event.result)
+      };
+    }
+  }
+
+  const callStep = steps.request;
+  const callEvent = events.find((e) => e.nodeId === "request" && (e.type.startsWith("action:") || e.type === "node:error"));
+  const call = callStep
+    ? {
+        label: callEvent?.label || "接口调用",
+        ok: callStep.ok !== false && !callEvent?.type?.includes("failure"),
+        request: callStep.request,
+        status: callStep.status,
+        headers: callStep.headers,
+        body: callStep.body,
+        durationMs: callStep.durationMs,
+        error: callEvent?.error
+      }
+    : callEvent
+      ? {
+          label: callEvent.label || "接口调用",
+          ok: false,
+          error: callEvent.error,
+          ...httpFrom(callEvent.result)
+        }
+      : null;
+
+  const assertions = Object.entries(steps)
+    .filter(([key, item]) => key.startsWith("assert-") && item && typeof item === "object" && "passed" in item)
+    .map(([key, item]) => {
+      const ev = events.find((e) => e.nodeId === key);
+      return {
+        id: key,
+        label: ev?.label || key,
+        passed: item.passed,
+        operator: item.operator,
+        actual: item.actual,
+        expected: item.expected
+      };
+    });
+
+  return { login, auth, call, assertions };
+}
+
 export async function executeCaseSet(workspace, caseSetId, options = {}) {
   const errors = validateWorkspace(workspace);
   if (errors.length) throw new FlowError("工作区 JSON 无效", { errors });
@@ -394,7 +513,17 @@ export async function executeCaseSet(workspace, caseSetId, options = {}) {
     if (actorTemplate?.config) actor = { id: actorId, ...actorTemplate.config };
   }
 
-  const enabledCases = (caseSet.cases || []).filter((item) => item.enabled !== false);
+  const caseIdFilter = Array.isArray(options.caseIds) && options.caseIds.length
+    ? new Set(options.caseIds)
+    : null;
+  const enabledCases = (caseSet.cases || []).filter((item) => {
+    if (caseIdFilter) return caseIdFilter.has(item.id);
+    return item.enabled !== false;
+  });
+  if (caseIdFilter && enabledCases.length === 0) {
+    throw new FlowError(`未找到要执行的用例: ${[...caseIdFilter].join(", ")}`);
+  }
+
   const results = [];
   for (const testCase of enabledCases) {
     const assertions = testCase.assertions?.length
@@ -452,6 +581,7 @@ export async function executeCaseSet(workspace, caseSetId, options = {}) {
       }]
     };
     const execution = await executeWorkspace(executionWorkspace, syntheticScenarioId, options);
+    const layers = buildCaseLayers(execution);
     results.push({
       id: testCase.id,
       name: testCase.name,
@@ -459,20 +589,23 @@ export async function executeCaseSet(workspace, caseSetId, options = {}) {
       error: execution.error,
       details: execution.details,
       response: execution.context?.steps?.request,
-      assertions: Object.values(execution.context?.steps || {}).filter((item) =>
-        item && typeof item === "object" && "passed" in item),
+      assertions: layers.assertions,
+      layers,
       events: execution.events
     });
   }
 
   const passed = results.filter((item) => item.ok).length;
+  const skipped = caseIdFilter
+    ? (caseSet.cases || []).length - enabledCases.length
+    : (caseSet.cases || []).length - enabledCases.length;
   return {
     ok: results.length > 0 && passed === results.length,
     summary: {
       total: results.length,
       passed,
       failed: results.length - passed,
-      skipped: (caseSet.cases || []).length - results.length
+      skipped
     },
     cases: results
   };

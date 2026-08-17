@@ -111,10 +111,14 @@ export function JsonField({
 
   return (
     <label className="block">
-      <span className="mb-1.5 flex items-center justify-between text-xs font-medium text-ink-soft">
-        {label}
-        {error && <span className="text-[11px] font-normal text-fail">JSON 无效</span>}
-      </span>
+      {label ? (
+        <span className="mb-1.5 flex items-center justify-between text-xs font-medium text-ink-soft">
+          {label}
+          {error && <span className="text-[11px] font-normal text-fail">JSON 无效</span>}
+        </span>
+      ) : (
+        error && <span className="mb-1.5 block text-[11px] font-normal text-fail">JSON 无效</span>
+      )}
       <textarea
         value={text}
         rows={rows}
@@ -130,6 +134,82 @@ export function JsonField({
       )}
       {error && <span className="mt-1 block text-[11px] leading-snug text-fail">{error}</span>}
     </label>
+  );
+}
+
+function isEmptyOptionalValue(value: unknown): boolean {
+  if (value === undefined || value === null) return true;
+  if (Array.isArray(value)) return value.length === 0;
+  if (typeof value === "object") return Object.keys(value as object).length === 0;
+  return false;
+}
+
+/**
+ * 可选 JSON：未配置时不展示空 {}，用按钮展开编辑。
+ * onCommit(undefined) 表示清除。
+ */
+export function OptionalJsonField({
+  label,
+  hint,
+  emptyHint = "未配置 · 点击添加",
+  value,
+  onCommit,
+  rows = 4,
+  emptyAs,
+}: {
+  label: string;
+  hint?: string;
+  emptyHint?: string;
+  value: unknown;
+  onCommit: (parsed: unknown | undefined) => void;
+  rows?: number;
+  emptyAs?: unknown;
+}) {
+  const empty = isEmptyOptionalValue(value);
+  const [editing, setEditing] = useState(!empty);
+
+  useEffect(() => {
+    if (!empty) setEditing(true);
+    else setEditing(false);
+  }, [empty]);
+
+  if (empty && !editing) {
+    return (
+      <div className="block">
+        <span className="mb-1.5 block text-xs font-medium text-ink-soft">{label}</span>
+        <button
+          type="button"
+          onClick={() => {
+            setEditing(true);
+            onCommit(emptyAs !== undefined ? structuredClone(emptyAs) : {});
+          }}
+          className="flex w-full items-center justify-between rounded-lg border border-dashed border-line bg-line-soft/40 px-3 py-2.5 text-left text-xs text-ink-faint transition hover:border-brand hover:bg-brand-soft hover:text-brand"
+        >
+          <span>{emptyHint}</span>
+          <span className="font-medium">添加</span>
+        </button>
+        {hint && <span className="mt-1 block text-[11px] leading-snug text-ink-faint">{hint}</span>}
+      </div>
+    );
+  }
+
+  return (
+    <div className="block">
+      <div className="mb-1.5 flex items-center justify-between gap-2">
+        <span className="text-xs font-medium text-ink-soft">{label}</span>
+        <button
+          type="button"
+          className="text-[11px] text-ink-faint hover:text-fail"
+          onClick={() => {
+            setEditing(false);
+            onCommit(undefined);
+          }}
+        >
+          清除
+        </button>
+      </div>
+      <JsonField label="" value={value ?? emptyAs ?? {}} onCommit={onCommit} rows={rows} hint={hint} />
+    </div>
   );
 }
 

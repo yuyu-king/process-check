@@ -18,11 +18,12 @@ export async function executeCaseSet(
   workspace: Workspace,
   caseSetId: string,
   signal?: AbortSignal,
+  options?: { caseIds?: string[] },
 ): Promise<CaseSetRunResult> {
   const res = await fetch("/api/execute-case-set", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ workspace, caseSetId }),
+    body: JSON.stringify({ workspace, caseSetId, caseIds: options?.caseIds }),
     signal,
   });
   if (!res.ok) {

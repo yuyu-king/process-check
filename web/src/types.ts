@@ -10,12 +10,21 @@ export interface RequestConfig {
 }
 
 /** 角色 / 账号：登录拿 cookie，或注入鉴权 header */
+export interface HeaderBinding {
+  path: string;
+  headerName: string;
+  prefix?: string;
+}
+
 export interface ActorAuth {
   enabled: boolean;
   request: RequestConfig;
-  tokenPath: string;
-  headerName: string;
-  prefix: string;
+  /** 从引导请求（或兼容：登录）响应注入的 Header */
+  bindings: HeaderBinding[];
+  /** @deprecated 迁移为 bindings[0] */
+  tokenPath?: string;
+  headerName?: string;
+  prefix?: string;
 }
 
 export interface Actor {
@@ -25,6 +34,8 @@ export interface Actor {
   variables: Json;
   login: RequestConfig;
   auth: ActorAuth;
+  /** 该角色后续请求自动带上的静态头（Referer / Origin 等） */
+  defaultHeaders?: Json;
 }
 
 export interface Api {
@@ -161,6 +172,33 @@ export interface RunResult {
   events?: RunEvent[];
 }
 
+export interface CaseLayerHttp {
+  label?: string;
+  ok?: boolean;
+  error?: string;
+  request?: unknown;
+  status?: number;
+  headers?: unknown;
+  body?: unknown;
+  durationMs?: number;
+}
+
+export interface CaseAssertionResult {
+  id?: string;
+  label?: string;
+  passed: boolean;
+  operator?: string;
+  actual?: unknown;
+  expected?: unknown;
+}
+
+export interface CaseRunLayers {
+  login: CaseLayerHttp | null;
+  auth: CaseLayerHttp | null;
+  call: CaseLayerHttp | null;
+  assertions: CaseAssertionResult[];
+}
+
 export interface CaseRunResult {
   id: string;
   name: string;
@@ -168,7 +206,8 @@ export interface CaseRunResult {
   error?: string;
   details?: unknown;
   response?: unknown;
-  assertions?: unknown[];
+  assertions?: CaseAssertionResult[];
+  layers?: CaseRunLayers;
   events?: RunEvent[];
 }
 

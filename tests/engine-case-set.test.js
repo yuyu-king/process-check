@@ -161,3 +161,56 @@ test("case set reuses Actor login and automatic token injection", async () => {
   assert.equal(calls.length, 2);
   assert.equal(calls[1].init.headers.Authorization, "Bearer case-token");
 });
+
+test("case set can run a single case by id and returns layered traces", async () => {
+  const fetchImpl = async (url) => {
+    if (String(url).endsWith("/token")) {
+      return new Response(JSON.stringify({ accessToken: "t" }), {
+        status: 200,
+        headers: { "content-type": "application/json" }
+      });
+    }
+    return new Response(JSON.stringify({ id: "p1" }), {
+      status: 201,
+      headers: { "content-type": "application/json" }
+    });
+  };
+  const workspace = workspaceWithCases([
+    {
+      id: "only-this",
+      name: "only this",
+      enabled: true,
+      overrides: { body: { name: "x" } },
+      assertions: [{ source: "status", operator: "equals", expected: 201 }]
+    },
+    {
+      id: "skip-me",
+      name: "skip me",
+      enabled: true,
+      overrides: {},
+      assertions: [{ source: "status", operator: "equals", expected: 200 }]
+    }
+  ]);
+  workspace.actors.push({
+    id: "supervisor",
+    name: "Supervisor",
+    variables: {},
+    login: { method: "POST", url: "{{env.baseUrl}}/token", headers: {}, body: {} },
+    auth: { enabled: true, tokenPath: "body.accessToken", headerName: "Authorization", prefix: "Bearer " }
+  });
+  workspace.caseSets[0].actorId = "supervisor";
+
+  const result = await executeCaseSet(workspace, "project-conditions", {
+    fetchImpl,
+    caseIds: ["only-this"]
+  });
+
+  assert.equal(result.cases.length, 1);
+  assert.equal(result.cases[0].id, "only-this");
+  assert.equal(result.ok, true, result.cases[0].error);
+  assert.ok(result.cases[0].layers);
+  assert.equal(result.cases[0].layers.login.ok, true);
+  assert.equal(result.cases[0].layers.call.status, 201);
+  assert.equal(result.cases[0].layers.call.request.method, "POST");
+  assert.equal(result.cases[0].layers.assertions[0].passed, true);
+});

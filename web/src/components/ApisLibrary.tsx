@@ -1,9 +1,9 @@
+import { useEffect, type ReactNode } from "react";
 import { selectCurrentApi, selectCurrentCaseSet, useStore } from "../store";
 import { executeCaseSet } from "../lib/api";
 import { safeStringify, summarizeJson } from "../lib/format";
 import type { Assertion, CaseRunResult, HttpMethod, Json } from "../types";
-import { Button, Field, IconButton, JsonField, Select, TextInput, Toggle, usePrompt } from "./ui";
-import { useEffect } from "react";
+import { Button, Field, IconButton, JsonField, OptionalJsonField, Select, TextInput, Toggle, usePrompt } from "./ui";
 
 const METHODS: HttpMethod[] = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"];
 
@@ -161,21 +161,34 @@ export default function ApisLibrary() {
                     />
                   </Field>
                 </div>
-                <JsonField
+                <OptionalJsonField
                   label="请求头"
-                  value={api.request.headers}
+                  emptyHint="未配置请求头 · 点击添加"
+                  value={
+                    api.request.headers && Object.keys(api.request.headers).length
+                      ? api.request.headers
+                      : undefined
+                  }
                   rows={2}
                   onCommit={(v) =>
-                    updateApi(api.id, { request: { ...api.request, headers: v as Json } })
+                    updateApi(api.id, { request: { ...api.request, headers: (v as Json) || {} } })
                   }
                 />
                 {!["GET", "HEAD"].includes(api.request.method) ? (
-                  <JsonField
+                  <OptionalJsonField
                     label="请求体"
-                    value={api.request.body ?? {}}
+                    emptyHint="未配置请求体 · 点击添加"
+                    value={api.request.body}
                     rows={5}
                     hint="支持 {{env.baseUrl}} {{shared.x}} {{random.uuid}}"
-                    onCommit={(v) => updateApi(api.id, { request: { ...api.request, body: v } })}
+                    onCommit={(v) =>
+                      updateApi(api.id, {
+                        request: {
+                          ...api.request,
+                          ...(v === undefined ? { body: undefined } : { body: v }),
+                        },
+                      })
+                    }
                   />
                 ) : (
                   <p className="text-[11px] text-ink-faint">GET/HEAD 不发送请求体；查询参数写在 URL 中。</p>
@@ -228,21 +241,51 @@ function ApiCaseSets({ apiId }: { apiId: string }) {
     if (name) addCaseSet(apiId, name);
   };
 
-  const run = async () => {
+  const run = async (caseIds?: string[]) => {
     if (!active) return;
-    setCaseRun({ caseRunState: "running", caseResults: [], selectedCaseResultId: null });
+    const single = Boolean(caseIds?.length);
+    if (!single) {
+      setCaseRun({ caseRunState: "running", caseResults: [], selectedCaseResultId: null });
+    } else {
+      setCaseRun({ caseRunState: "running", selectedCaseResultId: caseIds![0] });
+    }
     try {
-      const result = await executeCaseSet(structuredClone(workspace), active.id);
-      setCaseRun({
-        caseRunState: result.ok ? "success" : "failure",
-        caseResults: result.cases,
-        selectedCaseResultId: result.cases.find((c) => !c.ok)?.id || result.cases[0]?.id || null,
-      });
+      const result = await executeCaseSet(
+        structuredClone(workspace),
+        active.id,
+        undefined,
+        caseIds ? { caseIds } : undefined,
+      );
+      if (single) {
+        const prev = useStore.getState().caseResults;
+        const merged = [...prev];
+        for (const c of result.cases) {
+          const idx = merged.findIndex((x) => x.id === c.id);
+          if (idx >= 0) merged[idx] = c;
+          else merged.push(c);
+        }
+        setCaseRun({
+          caseRunState: result.ok ? "success" : "failure",
+          caseResults: merged,
+          selectedCaseResultId: result.cases[0]?.id || caseIds![0],
+        });
+      } else {
+        setCaseRun({
+          caseRunState: result.ok ? "success" : "failure",
+          caseResults: result.cases,
+          selectedCaseResultId: result.cases.find((c) => !c.ok)?.id || result.cases[0]?.id || null,
+        });
+      }
     } catch (e) {
       setCaseRun({
         caseRunState: "failure",
-        caseResults: [{ id: "err", name: "无法执行", ok: false, error: (e as Error).message }],
-        selectedCaseResultId: "err",
+        caseResults: single
+          ? [
+              ...useStore.getState().caseResults.filter((c) => !caseIds!.includes(c.id)),
+              { id: caseIds![0], name: "执行失败", ok: false, error: (e as Error).message },
+            ]
+          : [{ id: "err", name: "无法执行", ok: false, error: (e as Error).message }],
+        selectedCaseResultId: single ? caseIds![0] : "err",
       });
     }
   };
@@ -254,7 +297,7 @@ function ApiCaseSets({ apiId }: { apiId: string }) {
         <span className="text-xs text-ink-faint">边界参数校验</span>
         <div className="flex-1" />
         {active && (
-          <Button size="sm" variant="primary" onClick={run} disabled={caseRunState === "running"}>
+          <Button size="sm" variant="primary" onClick={() => run()} disabled={caseRunState === "running"}>
             {caseRunState === "running" ? "运行中…" : "▶ 批量运行"}
           </Button>
         )}
@@ -333,6 +376,7 @@ function ApiCaseSets({ apiId }: { apiId: string }) {
                         <th className="border-b border-line pb-2 font-medium">覆盖</th>
                         <th className="border-b border-line pb-2 font-medium">断言</th>
                         <th className="border-b border-line pb-2 font-medium">结果</th>
+                        <th className="border-b border-line pb-2 font-medium">操作</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -341,7 +385,10 @@ function ApiCaseSets({ apiId }: { apiId: string }) {
                         return (
                           <tr
                             key={c.id}
-                            onClick={() => selectCase(c.id)}
+                            onClick={() => {
+                              selectCase(c.id);
+                              if (r) setCaseRun({ selectedCaseResultId: c.id });
+                            }}
                             className={`cursor-pointer ${
                               selectedCaseId === c.id ? "bg-brand-soft" : "hover:bg-line-soft"
                             }`}
@@ -371,12 +418,26 @@ function ApiCaseSets({ apiId }: { apiId: string }) {
                                 <span className="text-ink-faint">未运行</span>
                               )}
                             </td>
+                            <td className="border-b border-line-soft py-2">
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                disabled={caseRunState === "running"}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  selectCase(c.id);
+                                  void run([c.id]);
+                                }}
+                              >
+                                ▶ 运行
+                              </Button>
+                            </td>
                           </tr>
                         );
                       })}
                       {!active.cases.length && (
                         <tr>
-                          <td colSpan={5} className="py-8 text-center text-sm text-ink-faint">
+                          <td colSpan={6} className="py-8 text-center text-sm text-ink-faint">
                             添加用例开始边界测试
                           </td>
                         </tr>
@@ -386,7 +447,7 @@ function ApiCaseSets({ apiId }: { apiId: string }) {
                 </div>
                 <CaseResults />
               </div>
-              <CaseEditor />
+              <CaseEditor onRunOne={(id) => run([id])} running={caseRunState === "running"} />
             </>
           )}
         </div>
@@ -396,7 +457,13 @@ function ApiCaseSets({ apiId }: { apiId: string }) {
   );
 }
 
-function CaseEditor() {
+function CaseEditor({
+  onRunOne,
+  running,
+}: {
+  onRunOne: (id: string) => void;
+  running: boolean;
+}) {
   const caseSet = useStore(selectCurrentCaseSet);
   const selectedCaseId = useStore((s) => s.selectedCaseId);
   const updateCase = useStore((s) => s.updateCase);
@@ -411,6 +478,15 @@ function CaseEditor() {
       </div>
       {testCase ? (
         <div className="space-y-4 p-4">
+          <Button
+            className="w-full"
+            variant="primary"
+            size="sm"
+            disabled={running}
+            onClick={() => onRunOne(testCase.id)}
+          >
+            {running ? "运行中…" : "▶ 运行此用例"}
+          </Button>
           <Toggle
             checked={testCase.enabled !== false}
             onChange={(v) => updateCase(testCase.id, { enabled: v })}
@@ -422,12 +498,19 @@ function CaseEditor() {
               onChange={(e) => updateCase(testCase.id, { name: e.target.value })}
             />
           </Field>
-          <JsonField
+          <OptionalJsonField
             label="参数覆盖"
-            value={testCase.overrides}
+            emptyHint="不覆盖 API 参数 · 需要时点击添加"
+            value={
+              testCase.overrides && Object.keys(testCase.overrides).length
+                ? testCase.overrides
+                : undefined
+            }
             rows={5}
             hint='与 API 定义深合并，如 {"body":{"amount":-1}}'
-            onCommit={(v) => updateCase(testCase.id, { overrides: v as Record<string, unknown> })}
+            onCommit={(v) =>
+              updateCase(testCase.id, { overrides: (v as Record<string, unknown>) || {} })
+            }
           />
           <JsonField
             label="断言"
@@ -458,6 +541,176 @@ function CaseEditor() {
   );
 }
 
+function LayerSection({
+  title,
+  ok,
+  defaultOpen,
+  children,
+}: {
+  title: string;
+  ok?: boolean | null;
+  defaultOpen?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <details
+      open={defaultOpen ?? ok === false}
+      className="group border-b border-white/10 last:border-0"
+    >
+      <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2.5 text-sm text-[#d5d8e0] hover:bg-white/5">
+        <span
+          className={`h-2 w-2 shrink-0 rounded-full ${
+            ok === true ? "bg-emerald-400" : ok === false ? "bg-red-400" : "bg-zinc-500"
+          }`}
+        />
+        <span className="flex-1 font-medium">{title}</span>
+        <span className="text-[10px] text-zinc-500 group-open:hidden">展开</span>
+        <span className="hidden text-[10px] text-zinc-500 group-open:inline">收起</span>
+      </summary>
+      <div className="space-y-2 px-3 pb-3">{children}</div>
+    </details>
+  );
+}
+
+function JsonBlock({ label, value }: { label: string; value: unknown }) {
+  if (value === undefined) return null;
+  return (
+    <div>
+      <div className="mb-1 text-[10px] uppercase tracking-wide text-zinc-500">{label}</div>
+      <pre className="overflow-x-auto rounded-md bg-black/40 p-2 font-mono text-[11px] leading-relaxed text-[#c8ccd6]">
+        {safeStringify(value)}
+      </pre>
+    </div>
+  );
+}
+
+function CaseResultDetail({ detail }: { detail: CaseRunResult }) {
+  const layers = detail.layers;
+  if (!layers && !detail.error) {
+    return (
+      <pre className="p-3 font-mono text-xs leading-relaxed text-[#d5d8e0]">
+        {safeStringify(detail)}
+      </pre>
+    );
+  }
+
+  const callOk = layers?.call ? layers.call.ok !== false && !layers.call.error : null;
+  const assertOk =
+    layers?.assertions?.length
+      ? layers.assertions.every((a) => a.passed)
+      : null;
+
+  return (
+    <div className="text-[#d5d8e0]">
+      <div className="flex items-center gap-2 border-b border-white/10 px-3 py-2">
+        <span
+          className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
+            detail.ok ? "bg-emerald-500/20 text-emerald-300" : "bg-red-500/20 text-red-300"
+          }`}
+        >
+          {detail.ok ? "通过" : "失败"}
+        </span>
+        <span className="text-sm font-medium">{detail.name}</span>
+        {detail.error && <span className="truncate text-xs text-red-300">{detail.error}</span>}
+      </div>
+
+      {layers?.login && (
+        <LayerSection title={`登录 · ${layers.login.label || ""}`} ok={layers.login.ok} defaultOpen={layers.login.ok === false}>
+          {layers.login.error && <p className="text-xs text-red-300">{layers.login.error}</p>}
+          {layers.login.status !== undefined && (
+            <p className="font-mono text-xs text-zinc-400">
+              HTTP {layers.login.status}
+              {layers.login.durationMs != null ? ` · ${layers.login.durationMs}ms` : ""}
+            </p>
+          )}
+          <JsonBlock label="请求入参" value={layers.login.request} />
+          <JsonBlock label="响应出参" value={{ headers: layers.login.headers, body: layers.login.body }} />
+        </LayerSection>
+      )}
+
+      {layers?.auth && (
+        <LayerSection title={`Token · ${layers.auth.label || ""}`} ok={layers.auth.ok} defaultOpen={layers.auth.ok === false}>
+          {layers.auth.error && <p className="text-xs text-red-300">{layers.auth.error}</p>}
+          {layers.auth.status !== undefined && (
+            <p className="font-mono text-xs text-zinc-400">
+              HTTP {layers.auth.status}
+              {layers.auth.durationMs != null ? ` · ${layers.auth.durationMs}ms` : ""}
+            </p>
+          )}
+          <JsonBlock label="请求入参" value={layers.auth.request} />
+          <JsonBlock label="响应出参" value={{ headers: layers.auth.headers, body: layers.auth.body }} />
+        </LayerSection>
+      )}
+
+      {layers?.call && (
+        <LayerSection title="接口调用" ok={callOk} defaultOpen>
+          {layers.call.error && <p className="text-xs text-red-300">{layers.call.error}</p>}
+          {layers.call.status !== undefined && (
+            <p className="font-mono text-xs text-zinc-400">
+              HTTP {layers.call.status}
+              {layers.call.durationMs != null ? ` · ${layers.call.durationMs}ms` : ""}
+            </p>
+          )}
+          <JsonBlock label="调用入参" value={layers.call.request} />
+          <JsonBlock
+            label="调用出参"
+            value={{ status: layers.call.status, headers: layers.call.headers, body: layers.call.body }}
+          />
+        </LayerSection>
+      )}
+
+      <LayerSection
+        title={`断言结果${layers?.assertions?.length ? ` (${layers.assertions.filter((a) => a.passed).length}/${layers.assertions.length})` : ""}`}
+        ok={assertOk}
+        defaultOpen={assertOk === false || !layers?.call}
+      >
+        {layers?.assertions?.length ? (
+          <div className="space-y-2">
+            {layers.assertions.map((a, i) => (
+              <div
+                key={a.id || i}
+                className={`rounded-md border p-2 ${
+                  a.passed ? "border-emerald-500/30 bg-emerald-500/10" : "border-red-500/40 bg-red-500/10"
+                }`}
+              >
+                <div className="mb-1 flex items-center gap-2 text-xs">
+                  <span className={a.passed ? "text-emerald-300" : "text-red-300"}>
+                    {a.passed ? "通过" : "失败"}
+                  </span>
+                  <span className="text-zinc-300">{a.label}</span>
+                </div>
+                <div className="grid grid-cols-3 gap-2 font-mono text-[11px]">
+                  <div>
+                    <div className="text-zinc-500">operator</div>
+                    <div>{a.operator}</div>
+                  </div>
+                  <div>
+                    <div className="text-zinc-500">actual</div>
+                    <div className="break-all">{safeStringify(a.actual)}</div>
+                  </div>
+                  <div>
+                    <div className="text-zinc-500">expected</div>
+                    <div className="break-all">{safeStringify(a.expected)}</div>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-xs text-zinc-500">无断言结果（可能在断言前已失败）</p>
+        )}
+      </LayerSection>
+
+      {detail.error && !layers?.call && (
+        <LayerSection title="错误信息" ok={false} defaultOpen>
+          <pre className="font-mono text-xs text-red-300">{detail.error}</pre>
+          {detail.details !== undefined && <JsonBlock label="details" value={detail.details} />}
+        </LayerSection>
+      )}
+    </div>
+  );
+}
+
 function CaseResults() {
   const caseResults = useStore((s) => s.caseResults);
   const selectedCaseResultId = useStore((s) => s.selectedCaseResultId);
@@ -466,8 +719,11 @@ function CaseResults() {
   const detail: CaseRunResult | undefined = caseResults.find((r) => r.id === selectedCaseResultId);
 
   return (
-    <div className="grid h-48 shrink-0 grid-cols-[240px_1fr] border-t border-line">
+    <div className="grid h-72 shrink-0 grid-cols-[220px_1fr] border-t border-line">
       <div className="overflow-y-auto border-r border-line bg-panel">
+        <div className="border-b border-line px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-ink-faint">
+          运行结果
+        </div>
         {caseResults.map((r) => (
           <button
             key={r.id}
@@ -481,10 +737,12 @@ function CaseResults() {
           </button>
         ))}
       </div>
-      <div className="overflow-auto bg-[#0f1117] p-3">
-        <pre className="font-mono text-xs leading-relaxed text-[#d5d8e0]">
-          {detail ? safeStringify(detail) : "选择结果查看详情"}
-        </pre>
+      <div className="overflow-auto bg-[#0f1117]">
+        {detail ? (
+          <CaseResultDetail detail={detail} />
+        ) : (
+          <p className="p-3 text-sm text-zinc-500">选择左侧一条结果查看分层详情</p>
+        )}
       </div>
     </div>
   );

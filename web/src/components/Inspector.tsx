@@ -1,7 +1,7 @@
 import { selectCurrentScenario, useStore, findNode } from "../store";
 import type { AssertOperator, FlowNode, Json, Scenario } from "../types";
 import { NODE_META } from "../lib/format";
-import { Button, Field, JsonField, Select, TextInput, Toggle } from "./ui";
+import { Button, Field, JsonField, OptionalJsonField, Select, TextInput, Toggle } from "./ui";
 
 const OPERATORS: AssertOperator[] = [
   "equals",
@@ -95,12 +95,17 @@ function ScenarioPanel({ scenario }: { scenario?: Scenario }) {
         </Field>
 
         <Divider label="场景默认 Header" />
-        <JsonField
+        <OptionalJsonField
           label="默认 Header（每个 API 都会自动带上）"
-          value={scenario.defaultHeaders}
+          emptyHint="未配置场景默认 Header · 点击添加"
+          value={
+            scenario.defaultHeaders && Object.keys(scenario.defaultHeaders).length
+              ? scenario.defaultHeaders
+              : undefined
+          }
           rows={4}
           hint='例如 {"X-Tenant":"acme"}。节点自身 Header / Override 可覆盖同名值。'
-          onCommit={(v) => updateScenario(scenario.id, { defaultHeaders: v as Json })}
+          onCommit={(v) => updateScenario(scenario.id, { defaultHeaders: (v as Json) || {} })}
         />
 
         <Divider label="流程中的角色节点" />
@@ -302,14 +307,15 @@ function ActionRefFields({ node, scenario }: { node: FlowNode; scenario: Scenari
       </Field>
 
       <Divider label="步骤覆盖" />
-      <JsonField
+      <OptionalJsonField
         label="请求覆盖 (requestOverride)"
-        value={node.data.requestOverride ?? {}}
+        emptyHint="不覆盖 API 定义 · 需要时点击添加"
+        value={node.data.requestOverride}
         rows={4}
-        hint={`深合并到 API 定义，如 {"body":{"name":"场景专用"}}`}
+        hint='深合并到 API 定义，如 {"body":{"name":"场景专用"}}'
         onCommit={(v) =>
           updateNodeData(node.id, {
-            requestOverride: Object.keys(v as Json).length
+            requestOverride: v
               ? (v as FlowNode["data"]["requestOverride"])
               : undefined,
           })
@@ -322,14 +328,15 @@ function ActionRefFields({ node, scenario }: { node: FlowNode; scenario: Scenari
           onChange={(e) => updateNodeData(node.id, { saveAs: e.target.value || undefined })}
         />
       </Field>
-      <JsonField
+      <OptionalJsonField
         label="写入场景默认 Header"
-        value={node.data.setDefaultHeaders ?? {}}
+        emptyHint="不写入默认 Header · 需要时点击添加"
+        value={node.data.setDefaultHeaders}
         rows={2}
         hint={`如 {"X-Token":"{{steps.${node.id}.body.token}}"}`}
         onCommit={(v) =>
           updateNodeData(node.id, {
-            setDefaultHeaders: Object.keys(v as Json).length ? (v as Json) : undefined,
+            setDefaultHeaders: v ? (v as Json) : undefined,
           })
         }
       />

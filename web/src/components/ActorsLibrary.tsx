@@ -1,6 +1,8 @@
+import type { ReactNode } from "react";
 import { selectCurrentActor, useStore } from "../store";
-import type { HttpMethod, Json } from "../types";
-import { Button, Field, IconButton, JsonField, Select, TextInput, Toggle, usePrompt } from "./ui";
+import { normalizeAuth } from "../seed";
+import type { HeaderBinding, HttpMethod, Json } from "../types";
+import { Button, Field, IconButton, JsonField, OptionalJsonField, Select, TextInput, Toggle, usePrompt } from "./ui";
 
 const METHODS: HttpMethod[] = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"];
 
@@ -100,7 +102,7 @@ export default function ActorsLibrary() {
               </Button>
             </div>
             <div className="flex-1 overflow-y-auto p-5">
-              <div className="mx-auto max-w-2xl space-y-4">
+              <div className="mx-auto max-w-2xl space-y-5">
                 <Field label="角色名称">
                   <TextInput
                     value={actor.name}
@@ -122,6 +124,8 @@ export default function ActorsLibrary() {
                     ))}
                   </Select>
                 </Field>
+
+                <SectionTitle>1. 登录（拿 Cookie）</SectionTitle>
                 <div className="grid grid-cols-[120px_1fr] gap-2">
                   <Field label="登录方法">
                     <Select
@@ -153,38 +157,66 @@ export default function ActorsLibrary() {
                   hint="登录体里用 {{actor.username}} 引用"
                   onCommit={(v) => updateActor(actor.id, { variables: v as Json })}
                 />
-                <JsonField
+                <OptionalJsonField
                   label="登录请求头"
-                  value={actor.login.headers}
+                  emptyHint="默认不需要额外 Header · 点击添加"
+                  value={
+                    actor.login.headers && Object.keys(actor.login.headers).length
+                      ? actor.login.headers
+                      : undefined
+                  }
                   rows={2}
                   onCommit={(v) =>
-                    updateActor(actor.id, { login: { ...actor.login, headers: v as Json } })
+                    updateActor(actor.id, {
+                      login: { ...actor.login, headers: (v as Json) || {} },
+                    })
                   }
                 />
-                <JsonField
-                  label="登录请求体"
-                  value={actor.login.body ?? {}}
-                  rows={3}
-                  onCommit={(v) => updateActor(actor.id, { login: { ...actor.login, body: v } })}
-                />
+                {!["GET", "HEAD"].includes(actor.login.method) && (
+                  <OptionalJsonField
+                    label="登录请求体"
+                    emptyHint="未配置请求体 · 点击添加"
+                    value={actor.login.body}
+                    rows={3}
+                    onCommit={(v) =>
+                      updateActor(actor.id, {
+                        login: { ...actor.login, ...(v === undefined ? { body: undefined } : { body: v }) },
+                      })
+                    }
+                  />
+                )}
+
+                <SectionTitle>2. 引导请求（独立 Token / CSRF 接口）</SectionTitle>
                 <div className="rounded-lg border border-line bg-line-soft/50 p-4">
                   <Toggle
                     checked={actor.auth.enabled}
                     onChange={(v) =>
-                      updateActor(actor.id, { auth: { ...actor.auth, enabled: v } })
+                      updateActor(actor.id, {
+                        auth: normalizeAuth({
+                          ...actor.auth,
+                          enabled: v,
+                          bindings:
+                            actor.auth.bindings?.length
+                              ? actor.auth.bindings
+                              : [{ path: "body.csrfToken", headerName: "X-CSRF-Token", prefix: "" }],
+                        }),
+                      })
                     }
-                    label="自动获取 Token 并注入后续 API"
+                    label="启用引导请求（登录后再调独立接口取 Token）"
                   />
                   {actor.auth.enabled && (
                     <div className="mt-3 space-y-3">
+                      <p className="text-[11px] leading-relaxed text-ink-faint">
+                        Token / CSRF 从本接口响应提取，不会从登录响应读取。登录仅用于 Cookie。
+                      </p>
                       <div className="grid grid-cols-[120px_1fr] gap-2">
-                        <Field label="Token 方法">
+                        <Field label="方法">
                           <Select
                             value={actor.auth.request.method}
                             onChange={(e) =>
                               updateActor(actor.id, {
                                 auth: {
-                                  ...actor.auth,
+                                  ...normalizeAuth(actor.auth),
                                   request: {
                                     ...actor.auth.request,
                                     method: e.target.value as HttpMethod,
@@ -198,14 +230,14 @@ export default function ActorsLibrary() {
                             ))}
                           </Select>
                         </Field>
-                        <Field label="Token 地址（留空则从登录响应取）">
+                        <Field label="接口地址">
                           <TextInput
                             value={actor.auth.request.url}
-                            placeholder="{{env.baseUrl}}/token"
+                            placeholder="{{env.baseUrl}}/csrf-token"
                             onChange={(e) =>
                               updateActor(actor.id, {
                                 auth: {
-                                  ...actor.auth,
+                                  ...normalizeAuth(actor.auth),
                                   request: { ...actor.auth.request, url: e.target.value },
                                 },
                               })
@@ -213,41 +245,70 @@ export default function ActorsLibrary() {
                           />
                         </Field>
                       </div>
-                      <div className="grid grid-cols-3 gap-2">
-                        <Field label="Token 路径">
-                          <TextInput
-                            value={actor.auth.tokenPath}
-                            onChange={(e) =>
-                              updateActor(actor.id, {
-                                auth: { ...actor.auth, tokenPath: e.target.value },
-                              })
-                            }
-                          />
-                        </Field>
-                        <Field label="Header 名">
-                          <TextInput
-                            value={actor.auth.headerName}
-                            onChange={(e) =>
-                              updateActor(actor.id, {
-                                auth: { ...actor.auth, headerName: e.target.value },
-                              })
-                            }
-                          />
-                        </Field>
-                        <Field label="前缀">
-                          <TextInput
-                            value={actor.auth.prefix}
-                            onChange={(e) =>
-                              updateActor(actor.id, {
-                                auth: { ...actor.auth, prefix: e.target.value },
-                              })
-                            }
-                          />
-                        </Field>
-                      </div>
+                      <OptionalJsonField
+                        label="引导请求头"
+                        emptyHint="未配置 · 点击添加"
+                        value={
+                          actor.auth.request.headers && Object.keys(actor.auth.request.headers).length
+                            ? actor.auth.request.headers
+                            : undefined
+                        }
+                        rows={2}
+                        onCommit={(v) =>
+                          updateActor(actor.id, {
+                            auth: {
+                              ...normalizeAuth(actor.auth),
+                              request: { ...actor.auth.request, headers: (v as Json) || {} },
+                            },
+                          })
+                        }
+                      />
+                      {!["GET", "HEAD"].includes(actor.auth.request.method) && (
+                        <OptionalJsonField
+                          label="引导请求体"
+                          emptyHint="未配置 · 点击添加"
+                          value={actor.auth.request.body}
+                          rows={2}
+                          onCommit={(v) =>
+                            updateActor(actor.id, {
+                              auth: {
+                                ...normalizeAuth(actor.auth),
+                                request: {
+                                  ...actor.auth.request,
+                                  ...(v === undefined ? { body: undefined } : { body: v }),
+                                },
+                              },
+                            })
+                          }
+                        />
+                      )}
+                      <BindingsEditor
+                        bindings={normalizeAuth(actor.auth).bindings}
+                        onChange={(bindings) =>
+                          updateActor(actor.id, {
+                            auth: { ...normalizeAuth(actor.auth), bindings },
+                          })
+                        }
+                      />
                     </div>
                   )}
                 </div>
+
+                <SectionTitle>3. 会话默认 Header</SectionTitle>
+                <OptionalJsonField
+                  label="后续业务请求自动带上"
+                  emptyHint="例如 Referer / Origin · 点击添加"
+                  hint='如 {"Referer":"{{env.baseUrl}}/","Origin":"{{env.baseUrl}}"}'
+                  value={
+                    actor.defaultHeaders && Object.keys(actor.defaultHeaders).length
+                      ? actor.defaultHeaders
+                      : undefined
+                  }
+                  rows={3}
+                  onCommit={(v) =>
+                    updateActor(actor.id, { defaultHeaders: (v as Json) || {} })
+                  }
+                />
               </div>
             </div>
           </>
@@ -261,6 +322,82 @@ export default function ActorsLibrary() {
         )}
       </div>
       {promptNode}
+    </div>
+  );
+}
+
+function SectionTitle({ children }: { children: ReactNode }) {
+  return (
+    <div className="flex items-center gap-2 pt-2">
+      <span className="text-[11px] font-semibold uppercase tracking-wide text-ink-faint">{children}</span>
+      <span className="h-px flex-1 bg-line" />
+    </div>
+  );
+}
+
+function BindingsEditor({
+  bindings,
+  onChange,
+}: {
+  bindings: HeaderBinding[];
+  onChange: (next: HeaderBinding[]) => void;
+}) {
+  const rows = bindings.length
+    ? bindings
+    : [{ path: "body.csrfToken", headerName: "X-CSRF-Token", prefix: "" }];
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-medium text-ink-soft">响应注入 Header</span>
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={() =>
+            onChange([...bindings, { path: "body.token", headerName: "Authorization", prefix: "Bearer " }])
+          }
+        >
+          ＋ 绑定
+        </Button>
+      </div>
+      <p className="text-[11px] text-ink-faint">从引导请求响应取值，注入到后续业务 API 的 Header。</p>
+      {rows.map((b, index) => (
+        <div key={index} className="grid grid-cols-[1fr_1fr_80px_28px] gap-1.5">
+          <TextInput
+            placeholder="body.csrfToken"
+            value={b.path}
+            onChange={(e) => {
+              const next = [...rows];
+              next[index] = { ...next[index], path: e.target.value };
+              onChange(next);
+            }}
+          />
+          <TextInput
+            placeholder="X-CSRF-Token"
+            value={b.headerName}
+            onChange={(e) => {
+              const next = [...rows];
+              next[index] = { ...next[index], headerName: e.target.value };
+              onChange(next);
+            }}
+          />
+          <TextInput
+            placeholder="前缀"
+            value={b.prefix || ""}
+            onChange={(e) => {
+              const next = [...rows];
+              next[index] = { ...next[index], prefix: e.target.value };
+              onChange(next);
+            }}
+          />
+          <IconButton
+            title="删除"
+            onClick={() => onChange(rows.filter((_, i) => i !== index))}
+          >
+            ×
+          </IconButton>
+        </div>
+      ))}
     </div>
   );
 }
