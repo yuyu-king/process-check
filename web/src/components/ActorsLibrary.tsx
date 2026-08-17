@@ -2,7 +2,18 @@ import type { ReactNode } from "react";
 import { selectCurrentActor, useStore } from "../store";
 import { normalizeAuth } from "../seed";
 import type { HeaderBinding, HttpMethod, Json } from "../types";
-import { Button, Field, IconButton, JsonField, OptionalJsonField, Select, TextInput, Toggle, usePrompt } from "./ui";
+import {
+  Button,
+  Field,
+  GroupHeaderActions,
+  IconButton,
+  JsonField,
+  OptionalJsonField,
+  Select,
+  TextInput,
+  Toggle,
+  usePrompt,
+} from "./ui";
 
 const METHODS: HttpMethod[] = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"];
 
@@ -16,11 +27,15 @@ export default function ActorsLibrary() {
   const deleteActor = useStore((s) => s.deleteActor);
   const duplicateActor = useStore((s) => s.duplicateActor);
   const addActorGroup = useStore((s) => s.addActorGroup);
+  const renameActorGroup = useStore((s) => s.renameActorGroup);
+  const deleteActorGroup = useStore((s) => s.deleteActorGroup);
   const { prompt, node: promptNode } = usePrompt();
 
-  const onAdd = async () => {
+  const onAdd = async (groupId?: string) => {
     const name = await prompt("新建角色", `角色 ${workspace.actors.length + 1}`);
-    if (name) addActor(name);
+    if (!name) return;
+    const id = addActor(name);
+    if (groupId) updateActor(id, { groupId });
   };
 
   return (
@@ -34,15 +49,27 @@ export default function ActorsLibrary() {
           }}>
             <FolderIcon />
           </IconButton>
-          <IconButton title="新建角色" onClick={onAdd}>
+          <IconButton title="新建角色" onClick={() => onAdd()}>
             <PlusIcon />
           </IconButton>
         </div>
         <div className="flex-1 overflow-y-auto p-2">
           {workspace.actorGroups.map((g) => (
             <div key={g.id} className="mb-2">
-              <div className="px-2 py-1 text-[11px] font-semibold uppercase tracking-wide text-ink-faint">
-                {g.name}
+              <div className="group flex items-center gap-1 rounded-md px-1.5 py-1">
+                <span className="flex-1 truncate px-0.5 text-[11px] font-semibold uppercase tracking-wide text-ink-faint">
+                  {g.name}
+                </span>
+                <GroupHeaderActions
+                  onAdd={() => onAdd(g.id)}
+                  onRename={async () => {
+                    const name = await prompt("重命名分组", g.name);
+                    if (name) renameActorGroup(g.id, name);
+                  }}
+                  onDelete={() => {
+                    if (confirm(`删除分组「${g.name}」？角色将移到未分组。`)) deleteActorGroup(g.id);
+                  }}
+                />
               </div>
               {workspace.actors
                 .filter((a) => a.groupId === g.id)
@@ -74,7 +101,7 @@ export default function ActorsLibrary() {
           )}
         </div>
         <div className="border-t border-line p-3">
-          <Button className="w-full" onClick={onAdd}>
+          <Button className="w-full" onClick={() => onAdd()}>
             <PlusIcon /> 新建角色
           </Button>
         </div>
@@ -315,7 +342,7 @@ export default function ActorsLibrary() {
         ) : (
           <div className="flex flex-1 flex-col items-center justify-center gap-3">
             <p className="text-sm text-ink-faint">选择或创建一个角色</p>
-            <Button variant="primary" onClick={onAdd}>
+            <Button variant="primary" onClick={() => onAdd()}>
               ＋ 新建角色
             </Button>
           </div>

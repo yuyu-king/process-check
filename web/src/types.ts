@@ -117,6 +117,7 @@ export interface Assertion {
 export interface TestCase {
   id: string;
   name: string;
+  description?: string;
   enabled: boolean;
   overrides: Json;
   assertions: Assertion[];

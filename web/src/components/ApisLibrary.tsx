@@ -3,7 +3,7 @@ import { selectCurrentApi, selectCurrentCaseSet, useStore } from "../store";
 import { executeCaseSet } from "../lib/api";
 import { safeStringify, summarizeJson } from "../lib/format";
 import type { Assertion, CaseRunResult, HttpMethod, Json } from "../types";
-import { Button, Field, IconButton, JsonField, OptionalJsonField, Select, TextInput, Toggle, usePrompt } from "./ui";
+import { Button, Field, GroupHeaderActions, IconButton, JsonField, OptionalJsonField, Select, TextArea, TextInput, Toggle, usePrompt } from "./ui";
 
 const METHODS: HttpMethod[] = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"];
 
@@ -24,11 +24,15 @@ export default function ApisLibrary() {
   const deleteApi = useStore((s) => s.deleteApi);
   const duplicateApi = useStore((s) => s.duplicateApi);
   const addApiGroup = useStore((s) => s.addApiGroup);
+  const renameApiGroup = useStore((s) => s.renameApiGroup);
+  const deleteApiGroup = useStore((s) => s.deleteApiGroup);
   const { prompt, node: promptNode } = usePrompt();
 
-  const onAdd = async () => {
+  const onAdd = async (groupId?: string) => {
     const name = await prompt("新建 API", `接口 ${workspace.apis.length + 1}`);
-    if (name) addApi(name);
+    if (!name) return;
+    const id = addApi(name);
+    if (groupId) updateApi(id, { groupId });
   };
 
   return (
@@ -45,15 +49,27 @@ export default function ApisLibrary() {
           >
             <FolderIcon />
           </IconButton>
-          <IconButton title="新建 API" onClick={onAdd}>
+          <IconButton title="新建 API" onClick={() => onAdd()}>
             <PlusIcon />
           </IconButton>
         </div>
         <div className="flex-1 overflow-y-auto p-2">
           {workspace.apiGroups.map((g) => (
             <div key={g.id} className="mb-2">
-              <div className="px-2 py-1 text-[11px] font-semibold uppercase tracking-wide text-ink-faint">
-                {g.name}
+              <div className="group flex items-center gap-1 rounded-md px-1.5 py-1">
+                <span className="flex-1 truncate px-0.5 text-[11px] font-semibold uppercase tracking-wide text-ink-faint">
+                  {g.name}
+                </span>
+                <GroupHeaderActions
+                  onAdd={() => onAdd(g.id)}
+                  onRename={async () => {
+                    const name = await prompt("重命名分组", g.name);
+                    if (name) renameApiGroup(g.id, name);
+                  }}
+                  onDelete={() => {
+                    if (confirm(`删除分组「${g.name}」？API 将移到未分组。`)) deleteApiGroup(g.id);
+                  }}
+                />
               </div>
               {workspace.apis
                 .filter((a) => a.groupId === g.id)
@@ -87,7 +103,7 @@ export default function ApisLibrary() {
           )}
         </div>
         <div className="border-t border-line p-3">
-          <Button className="w-full" onClick={onAdd}>
+          <Button className="w-full" onClick={() => onAdd()}>
             <PlusIcon /> 新建 API
           </Button>
         </div>
@@ -200,7 +216,7 @@ export default function ApisLibrary() {
         ) : (
           <div className="flex flex-1 flex-col items-center justify-center gap-3">
             <p className="text-sm text-ink-faint">选择或创建一个 API</p>
-            <Button variant="primary" onClick={onAdd}>
+            <Button variant="primary" onClick={() => onAdd()}>
               ＋ 新建 API
             </Button>
           </div>
@@ -373,7 +389,7 @@ function ApiCaseSets({ apiId }: { apiId: string }) {
                       <tr className="text-left text-xs text-ink-faint">
                         <th className="border-b border-line pb-2 pl-2 font-medium">启用</th>
                         <th className="border-b border-line pb-2 font-medium">名称</th>
-                        <th className="border-b border-line pb-2 font-medium">覆盖</th>
+                        <th className="border-b border-line pb-2 font-medium">请求体覆盖</th>
                         <th className="border-b border-line pb-2 font-medium">断言</th>
                         <th className="border-b border-line pb-2 font-medium">结果</th>
                         <th className="border-b border-line pb-2 font-medium">操作</th>
@@ -399,7 +415,11 @@ function ApiCaseSets({ apiId }: { apiId: string }) {
                             <td className="border-b border-line-soft py-2 font-medium">{c.name}</td>
                             <td className="border-b border-line-soft py-2">
                               <code className="mono text-ink-soft">
-                                {summarizeJson(c.overrides) || "—"}
+                                {summarizeJson(
+                                  c.overrides && typeof c.overrides === "object" && "body" in c.overrides
+                                    ? (c.overrides as { body?: unknown }).body
+                                    : undefined,
+                                ) || "—"}
                               </code>
                             </td>
                             <td className="border-b border-line-soft py-2 text-ink-soft">
@@ -421,7 +441,7 @@ function ApiCaseSets({ apiId }: { apiId: string }) {
                             <td className="border-b border-line-soft py-2">
                               <Button
                                 size="sm"
-                                variant="ghost"
+                                variant="primary"
                                 disabled={caseRunState === "running"}
                                 onClick={(e) => {
                                   e.stopPropagation();
@@ -498,19 +518,40 @@ function CaseEditor({
               onChange={(e) => updateCase(testCase.id, { name: e.target.value })}
             />
           </Field>
+          <Field label="描述" hint="仅编辑区可见，表格不展示">
+            <TextArea
+              rows={3}
+              value={testCase.description || ""}
+              placeholder="可选说明"
+              onChange={(e) => updateCase(testCase.id, { description: e.target.value })}
+            />
+          </Field>
           <OptionalJsonField
-            label="参数覆盖"
-            emptyHint="不覆盖 API 参数 · 需要时点击添加"
+            label="请求体覆盖"
+            emptyHint="不覆盖请求体 · 需要时点击添加"
             value={
-              testCase.overrides && Object.keys(testCase.overrides).length
-                ? testCase.overrides
+              testCase.overrides &&
+              typeof testCase.overrides === "object" &&
+              testCase.overrides.body != null
+                ? testCase.overrides.body
                 : undefined
             }
             rows={5}
-            hint='与 API 定义深合并，如 {"body":{"amount":-1}}'
-            onCommit={(v) =>
-              updateCase(testCase.id, { overrides: (v as Record<string, unknown>) || {} })
-            }
+            hint='直接写 body 内容，如 { "name": "自定义", "amount": -1 }'
+            onCommit={(v) => {
+              const prev =
+                testCase.overrides && typeof testCase.overrides === "object"
+                  ? { ...testCase.overrides }
+                  : {};
+              if (v === undefined || v === null) {
+                delete prev.body;
+                updateCase(testCase.id, {
+                  overrides: Object.keys(prev).length ? prev : {},
+                });
+              } else {
+                updateCase(testCase.id, { overrides: { ...prev, body: v as Json } });
+              }
+            }}
           />
           <JsonField
             label="断言"

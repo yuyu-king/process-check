@@ -67,6 +67,15 @@ export function TextInput(props: React.InputHTMLAttributes<HTMLInputElement>) {
   return <input {...props} className={`${inputCls} ${props.className || ""}`} />;
 }
 
+export function TextArea(props: React.TextareaHTMLAttributes<HTMLTextAreaElement>) {
+  return (
+    <textarea
+      {...props}
+      className={`${inputCls} resize-y min-h-[4.5rem] ${props.className || ""}`}
+    />
+  );
+}
+
 export function Select(props: React.SelectHTMLAttributes<HTMLSelectElement>) {
   return <select {...props} className={`${inputCls} cursor-pointer ${props.className || ""}`} />;
 }
@@ -265,6 +274,177 @@ export function Toggle({
       {label}
     </label>
   );
+}
+
+/** 三点更多菜单：点击展开，点击外部关闭（仅扁平项，无飞出子菜单） */
+export function MoreMenu({
+  items,
+  align = "right",
+}: {
+  items: {
+    label: string;
+    danger?: boolean;
+    disabled?: boolean;
+    onClick?: () => void;
+  }[];
+  align?: "left" | "right";
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (!ref.current?.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [open]);
+
+  return (
+    <div className="relative" ref={ref} onClick={(e) => e.stopPropagation()}>
+      <IconButton
+        title="更多"
+        onClick={(e) => {
+          e.stopPropagation();
+          setOpen((v) => !v);
+        }}
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+          <circle cx="12" cy="5" r="1.75" />
+          <circle cx="12" cy="12" r="1.75" />
+          <circle cx="12" cy="19" r="1.75" />
+        </svg>
+      </IconButton>
+      {open && (
+        <div
+          className={`absolute top-full z-40 mt-1 min-w-[148px] rounded-lg border border-line bg-white py-1 shadow-lg ${
+            align === "right" ? "right-0" : "left-0"
+          }`}
+        >
+          {items.map((item) => (
+            <button
+              key={item.label}
+              type="button"
+              disabled={item.disabled}
+              className={`block w-full px-3 py-1.5 text-left text-sm hover:bg-line-soft disabled:opacity-40 ${
+                item.danger ? "text-fail" : "text-ink"
+              }`}
+              onClick={() => {
+                item.onClick?.();
+                setOpen(false);
+              }}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function GroupHeaderActions({
+  onAdd,
+  onRename,
+  onDelete,
+}: {
+  onAdd?: () => void;
+  onRename: () => void;
+  onDelete: () => void;
+}) {
+  return (
+    <span className="hidden items-center group-hover:flex">
+      {onAdd && (
+        <IconButton title="新增到该分组" onClick={onAdd}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+            <path d="M12 5v14M5 12h14" />
+          </svg>
+        </IconButton>
+      )}
+      <IconButton title="重命名分组" onClick={onRename}>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" />
+        </svg>
+      </IconButton>
+      <IconButton title="删除分组" onClick={onDelete}>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+        </svg>
+      </IconButton>
+    </span>
+  );
+}
+
+/** 单选弹层：返回选中 value，取消为 null */
+export function usePickOption() {
+  const [state, setState] = useState<{
+    title: string;
+    options: { value: string; label: string }[];
+    selected: string;
+    resolve: (v: string | null) => void;
+  } | null>(null);
+
+  const pick = (title: string, options: { value: string; label: string }[], initial?: string) =>
+    new Promise<string | null>((resolve) =>
+      setState({
+        title,
+        options,
+        selected: initial ?? options[0]?.value ?? "",
+        resolve,
+      }),
+    );
+
+  const close = (value: string | null) => {
+    if (!state) return;
+    state.resolve(value);
+    setState(null);
+  };
+
+  const node = state ? (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30" onClick={() => close(null)}>
+      <div
+        className="w-80 max-h-[70vh] overflow-hidden rounded-xl bg-white shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h3 className="border-b border-line px-5 py-3.5 text-sm font-semibold text-ink">{state.title}</h3>
+        <div className="max-h-[40vh] overflow-y-auto px-2 py-2">
+          {state.options.map((opt) => (
+            <label
+              key={opt.value}
+              className={`flex cursor-pointer items-center gap-2.5 rounded-lg px-3 py-2 text-sm transition ${
+                state.selected === opt.value ? "bg-brand-soft text-brand" : "text-ink hover:bg-line-soft"
+              }`}
+            >
+              <input
+                type="radio"
+                name="pick-option"
+                className="accent-brand"
+                checked={state.selected === opt.value}
+                onChange={() => setState({ ...state, selected: opt.value })}
+              />
+              <span className="min-w-0 flex-1 truncate">{opt.label}</span>
+            </label>
+          ))}
+        </div>
+        <div className="flex justify-end gap-2 border-t border-line px-5 py-3">
+          <Button size="sm" onClick={() => close(null)}>
+            取消
+          </Button>
+          <Button
+            size="sm"
+            variant="primary"
+            disabled={!state.options.length}
+            onClick={() => close(state.selected || null)}
+          >
+            确定
+          </Button>
+        </div>
+      </div>
+    </div>
+  ) : null;
+
+  return { pick, node };
 }
 
 /** Lightweight prompt modal (replaces window.prompt for a nicer UX). */
