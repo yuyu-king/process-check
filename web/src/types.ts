@@ -64,7 +64,7 @@ export interface FlowNodeData {
   apiId?: string;
   /** 指定流程中的角色节点（覆盖「最近角色」） */
   actorNodeId?: string;
-  /** 步骤级请求覆盖，深合并到 API.request */
+  /** 步骤级请求覆盖（UI 仅编辑 body，深合并到 API.request） */
   requestOverride?: Partial<RequestConfig> & Json;
   saveAs?: string;
   continueOnFailure?: boolean;

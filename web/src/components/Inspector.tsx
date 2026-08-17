@@ -308,18 +308,35 @@ function ActionRefFields({ node, scenario }: { node: FlowNode; scenario: Scenari
 
       <Divider label="步骤覆盖" />
       <OptionalJsonField
-        label="请求覆盖 (requestOverride)"
-        emptyHint="不覆盖 API 定义 · 需要时点击添加"
-        value={node.data.requestOverride}
-        rows={4}
-        hint='深合并到 API 定义，如 {"body":{"name":"场景专用"}}'
-        onCommit={(v) =>
-          updateNodeData(node.id, {
-            requestOverride: v
-              ? (v as FlowNode["data"]["requestOverride"])
-              : undefined,
-          })
+        label="请求体覆盖"
+        emptyHint="不覆盖请求体 · 需要时点击添加"
+        value={
+          node.data.requestOverride &&
+          typeof node.data.requestOverride === "object" &&
+          node.data.requestOverride.body != null
+            ? node.data.requestOverride.body
+            : undefined
         }
+        rows={4}
+        hint='直接写 body 内容，如 { "name": "场景专用", "amount": -1 }'
+        onCommit={(v) => {
+          const prev =
+            node.data.requestOverride && typeof node.data.requestOverride === "object"
+              ? { ...node.data.requestOverride }
+              : {};
+          if (v === undefined || v === null) {
+            delete prev.body;
+            updateNodeData(node.id, {
+              requestOverride: Object.keys(prev).length
+                ? (prev as FlowNode["data"]["requestOverride"])
+                : undefined,
+            });
+          } else {
+            updateNodeData(node.id, {
+              requestOverride: { ...prev, body: v as Json },
+            });
+          }
+        }}
       />
       <Field label="保存响应到共享变量">
         <TextInput

@@ -40,7 +40,12 @@ function nodeSubtitle(node: FlowNode, ws: Workspace): string {
   if (node.type === "action") {
     const api = ws.apis.find((a) => a.id === node.data.apiId);
     if (!api) return "从 API 库选择";
-    const ov = node.data.requestOverride ? " · 有覆盖" : "";
+    const ov =
+      node.data.requestOverride &&
+      typeof node.data.requestOverride === "object" &&
+      node.data.requestOverride.body != null
+        ? " · 有覆盖"
+        : "";
     return `${api.request.method} ${api.request.url}${ov}`;
   }
   if (node.type === "scenario") return "执行并共享变量";
