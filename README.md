@@ -89,10 +89,53 @@ Header 名称：Authorization
 
 本地执行器仅监听 `127.0.0.1`。它会按场景内容访问指定 URL，因此只导入可信的场景 JSON。
 
-## 生成 Skill
+## 用 Claude Code 生成用例
 
-项目内的 `skills/generate-api-validation-scenario` 可让 Codex 分析接口定义、路由和业务流程，生成可直接导入本工具的 JSON。将该 Skill 安装或链接到你的 Codex skills 目录后，可这样调用：
+在**原始业务仓库**里让 Claude Code 分析路由、校验和业务流程，生成可导入本工具的 v5 工作区 JSON（接口用例集 + 流程场景）。Skill 源文件在本仓库 `skills/generate-process-check-workspace`。
+
+必须在业务仓中调用，而不是只在 process-check 仓库里调用。
+
+### 安装（本机全局，任意仓库可用）
+
+把 Skill 目录 junction / symlink 到 Claude Code 的用户 skills 目录，这样本仓库改 Skill 后全局立刻生效。
+
+PowerShell（Windows）：
+
+```powershell
+$src = "C:\path\to\process-check\skills\generate-process-check-workspace"
+$dest = Join-Path $env:USERPROFILE ".claude\skills\generate-process-check-workspace"
+New-Item -ItemType Directory -Force -Path (Split-Path $dest) | Out-Null
+if (Test-Path $dest) { Remove-Item $dest -Force }
+cmd /c mklink /J "$dest" "$src"
+```
+
+macOS / Linux：
+
+```bash
+mkdir -p ~/.claude/skills
+ln -sfn /path/to/process-check/skills/generate-process-check-workspace \
+  ~/.claude/skills/generate-process-check-workspace
+```
+
+把路径换成你的 process-check 克隆地址。若 junction 失败，也可整目录复制到 `~/.claude/skills/generate-process-check-workspace`（之后需手动同步更新）。
+
+### 团队共享（装进业务仓）
+
+把 `skills/generate-process-check-workspace` 复制为业务仓的 `.claude/skills/generate-process-check-workspace` 并提交，克隆该仓的人即可使用。
+
+### 调用
+
+在业务仓打开 Claude Code：
 
 ```text
-使用 $generate-api-validation-scenario 分析当前项目，生成“创建项目后依次审批”的验证场景。
+分析当前项目，生成 Process Check 验证场景（创建后审批）
 ```
+
+或 `/generate-process-check-workspace`。默认写入 `process-check.workspace.json`。
+
+### 导入并运行
+
+1. 本仓库执行 `npm start`，打开 `http://127.0.0.1:4399`
+2. 导入生成的 JSON
+3. 把 `<TEST_USERNAME>` 等占位符和 `environments.local.baseUrl` 改成测试环境
+4. 在「流程验证」跑场景，在「接口用例集」批量跑边界用例

@@ -1,4 +1,4 @@
 interface:
-  display_name: "生成接口验证工作区"
-  short_description: "分析后端项目并生成可导入的流程链路与接口条件验证工作区"
-  default_prompt: "使用 $generate-api-validation-scenario 分析当前项目，生成流程场景或接口条件用例集 JSON。"
+  display_name: "生成接口验证工作区（已弃用）"
+  short_description: "请改用 generate-process-check-workspace"
+  default_prompt: "使用 generate-process-check-workspace 分析当前项目，生成 Process Check v5 流程场景或接口条件用例集 JSON。"

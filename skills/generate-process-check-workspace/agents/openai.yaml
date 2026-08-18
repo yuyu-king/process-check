@@ -1,0 +1,4 @@
+interface:
+  display_name: "生成 Process Check 工作区"
+  short_description: "分析后端项目并生成可导入的 v5 流程场景与接口用例集 JSON"
+  default_prompt: "使用 generate-process-check-workspace 分析当前项目，生成流程场景或接口条件用例集 JSON。"

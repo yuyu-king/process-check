@@ -1,0 +1,212 @@
+{
+  "version": 5,
+  "name": "项目审批链路验证",
+  "activeEnvironment": "local",
+  "environments": {
+    "local": { "baseUrl": "http://127.0.0.1:8080" }
+  },
+  "variables": {},
+  "scenarioGroups": [{ "id": "group-approval", "name": "审批流程" }],
+  "apiGroups": [],
+  "actorGroups": [],
+  "actors": [
+    {
+      "id": "actor-supervisor",
+      "name": "主管",
+      "variables": {
+        "username": "<TEST_USERNAME>",
+        "password": "<TEST_PASSWORD>"
+      },
+      "login": {
+        "method": "POST",
+        "url": "{{env.baseUrl}}/login",
+        "headers": {},
+        "body": {
+          "username": "{{actor.username}}",
+          "password": "{{actor.password}}"
+        }
+      },
+      "auth": {
+        "enabled": true,
+        "request": {
+          "method": "GET",
+          "url": "{{env.baseUrl}}/token",
+          "headers": {}
+        },
+        "bindings": [
+          {
+            "path": "body.data.accessToken",
+            "headerName": "Authorization",
+            "prefix": "Bearer "
+          }
+        ]
+      },
+      "defaultHeaders": {}
+    },
+    {
+      "id": "actor-manager",
+      "name": "经理",
+      "variables": {
+        "username": "<TEST_MANAGER_USERNAME>",
+        "password": "<TEST_PASSWORD>"
+      },
+      "login": {
+        "method": "POST",
+        "url": "{{env.baseUrl}}/login",
+        "headers": {},
+        "body": {
+          "username": "{{actor.username}}",
+          "password": "{{actor.password}}"
+        }
+      },
+      "auth": {
+        "enabled": true,
+        "request": {
+          "method": "GET",
+          "url": "{{env.baseUrl}}/token",
+          "headers": {}
+        },
+        "bindings": [
+          {
+            "path": "body.data.accessToken",
+            "headerName": "Authorization",
+            "prefix": "Bearer "
+          }
+        ]
+      },
+      "defaultHeaders": {}
+    }
+  ],
+  "apis": [
+    {
+      "id": "api-create-project",
+      "name": "创建项目",
+      "request": {
+        "method": "POST",
+        "url": "{{env.baseUrl}}/projects",
+        "headers": {},
+        "body": {
+          "projectName": "yb-{{random.string}}",
+          "approvers": ["<TEST_MANAGER_USERNAME>"]
+        }
+      }
+    },
+    {
+      "id": "api-approve-project",
+      "name": "审批项目",
+      "request": {
+        "method": "POST",
+        "url": "{{env.baseUrl}}/projects/{{shared.project.id}}/approve",
+        "headers": {},
+        "body": { "approved": true }
+      }
+    }
+  ],
+  "caseSets": [
+    {
+      "id": "case-set-create-project",
+      "name": "创建项目参数验证",
+      "apiId": "api-create-project",
+      "actorId": "actor-supervisor",
+      "cases": [
+        {
+          "id": "case-normal",
+          "name": "正常创建",
+          "enabled": true,
+          "overrides": {
+            "body": {
+              "projectName": "yb-{{random.string}}",
+              "approvers": ["<TEST_MANAGER_USERNAME>"]
+            }
+          },
+          "assertions": [
+            { "source": "status", "operator": "equals", "expected": 201 },
+            { "source": "body.id", "operator": "exists" }
+          ]
+        },
+        {
+          "id": "case-empty-name",
+          "name": "名称为空",
+          "enabled": true,
+          "overrides": { "body": { "projectName": "" } },
+          "assertions": [
+            { "source": "status", "operator": "equals", "expected": 400 }
+          ]
+        }
+      ]
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "scenario-happy-path",
+      "name": "主管创建、经理审批",
+      "groupId": "group-approval",
+      "description": "验证创建项目后经理审批，最后触发邮件通知。",
+      "defaultHeaders": {},
+      "nodes": [
+        {
+          "id": "use-supervisor",
+          "type": "actor",
+          "x": 40,
+          "y": 160,
+          "data": { "actorId": "actor-supervisor" }
+        },
+        {
+          "id": "create-project",
+          "type": "action",
+          "x": 290,
+          "y": 160,
+          "data": { "apiId": "api-create-project", "saveAs": "project" }
+        },
+        {
+          "id": "assert-create",
+          "type": "assert",
+          "x": 540,
+          "y": 160,
+          "data": {
+            "label": "创建成功",
+            "actual": "{{steps.create-project.status}}",
+            "operator": "equals",
+            "expected": 201
+          }
+        },
+        {
+          "id": "use-manager",
+          "type": "actor",
+          "x": 40,
+          "y": 360,
+          "data": { "actorId": "actor-manager" }
+        },
+        {
+          "id": "approve-project",
+          "type": "action",
+          "x": 290,
+          "y": 360,
+          "data": {
+            "apiId": "api-approve-project",
+            "actorNodeId": "use-manager"
+          }
+        },
+        {
+          "id": "assert-mail",
+          "type": "assert",
+          "x": 540,
+          "y": 360,
+          "data": {
+            "label": "审批触发邮件",
+            "actual": "{{steps.approve-project.body.emailSent}}",
+            "operator": "equals",
+            "expected": true
+          }
+        }
+      ],
+      "edges": [
+        { "source": "use-supervisor", "target": "create-project" },
+        { "source": "create-project", "target": "assert-create" },
+        { "source": "assert-create", "target": "use-manager" },
+        { "source": "use-manager", "target": "approve-project" },
+        { "source": "approve-project", "target": "assert-mail" }
+      ]
+    }
+  ]
+}
